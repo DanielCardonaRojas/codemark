@@ -1008,6 +1008,51 @@ mod tests {
         assert_eq!(ordered_member_ids(&fx.db, &col.id).unwrap(), vec![alpha, beta]);
     }
 
+    /// Knowledge follows the tour: a fork clones its original's comments,
+    /// anchored and whole-bookmark, with replies re-pointed at the new ids.
+    #[tokio::test]
+    async fn copy_clones_anchored_comments_and_replies() {
+        let (fx, col, feature, [alpha, _beta]) = setup("comments").await;
+        fx.commit("main", &[("lib.dart", LIB)], Some(feature));
+
+        let root = BookmarkComment {
+            query: Some("(return_statement) @target".into()),
+            content_hash: Some("hash-1".into()),
+            anchor_hint: Some("L2-L2: return a + 1;".into()),
+            ..BookmarkComment::new(alpha.as_str(), "claude", "anchored")
+        };
+        let reply = BookmarkComment {
+            parent_id: Some(root.id.clone()),
+            ..BookmarkComment::new(alpha.as_str(), "daniel", "a reply")
+        };
+        fx.db.insert_comments(&[root.clone(), reply]).unwrap();
+
+        let plan = plan_transfer(&fx.db, &col, &fx.options("main", false)).await.unwrap();
+        let out = apply_transfer(
+            &fx.db,
+            &plan,
+            &TransferMode::Copy { new_name: "arith-comments".into() },
+            OnUnmatched::Fail,
+            None,
+        )
+        .unwrap();
+        let fork_id = &out.forked.iter().find(|f| f.original_id == alpha).unwrap().fork_id;
+
+        let comments = fx.db.list_comments_for_bookmark(fork_id).unwrap();
+        assert_eq!(comments.len(), 2);
+        let fork_root = comments.iter().find(|c| c.parent_id.is_none()).unwrap();
+        let fork_reply = comments.iter().find(|c| c.parent_id.is_some()).unwrap();
+        assert_ne!(fork_root.id, root.id, "fork comments get their own ids");
+        assert_eq!(fork_root.query, root.query);
+        assert_eq!(fork_root.content_hash, root.content_hash);
+        assert_eq!(fork_root.anchor_hint, root.anchor_hint);
+        assert_eq!(fork_reply.parent_id.as_deref(), Some(fork_root.id.as_str()));
+        assert!(!fork_reply.is_anchored());
+
+        // The original keeps its own comments.
+        assert_eq!(fx.db.list_comments_for_bookmark(&alpha).unwrap().len(), 2);
+    }
+
     /// Without `--to`, a transfer reads the *invoking* worktree's files (the
     /// database belongs to the main checkout), and records uncommitted code as
     /// dirty rather than as committed at HEAD.

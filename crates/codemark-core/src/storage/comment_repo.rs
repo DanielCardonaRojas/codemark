@@ -6,8 +6,9 @@ impl Database {
     /// Insert a new bookmark comment.
     pub fn insert_comment(&self, comment: &BookmarkComment) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO bookmark_comments
+                (id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 comment.id,
                 comment.bookmark_id,
@@ -15,6 +16,9 @@ impl Database {
                 comment.body,
                 comment.created_at,
                 comment.parent_id,
+                comment.query,
+                comment.content_hash,
+                comment.anchor_hint,
             ],
         )?;
         Ok(())
@@ -25,8 +29,9 @@ impl Database {
         let tx = self.conn().unchecked_transaction()?;
         for comment in comments {
             tx.execute(
-                "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO bookmark_comments
+                    (id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 rusqlite::params![
                     comment.id,
                     comment.bookmark_id,
@@ -34,6 +39,9 @@ impl Database {
                     comment.body,
                     comment.created_at,
                     comment.parent_id,
+                    comment.query,
+                    comment.content_hash,
+                    comment.anchor_hint,
                 ],
             )?;
         }
@@ -44,7 +52,7 @@ impl Database {
     /// List all comments for a specific bookmark.
     pub fn list_comments_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<BookmarkComment>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, bookmark_id, author, body, created_at, parent_id
+            "SELECT id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint
              FROM bookmark_comments
              WHERE bookmark_id = ?1
              ORDER BY created_at ASC",
@@ -57,6 +65,9 @@ impl Database {
                 body: row.get(3)?,
                 created_at: row.get(4)?,
                 parent_id: row.get(5)?,
+                query: row.get(6)?,
+                content_hash: row.get(7)?,
+                anchor_hint: row.get(8)?,
             })
         })?;
 
@@ -67,7 +78,7 @@ impl Database {
     /// Get a comment by its ID.
     pub fn get_comment(&self, id: &str) -> Result<Option<BookmarkComment>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, bookmark_id, author, body, created_at, parent_id
+            "SELECT id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint
              FROM bookmark_comments
              WHERE id = ?1",
         )?;
@@ -79,6 +90,9 @@ impl Database {
                 body: row.get(3)?,
                 created_at: row.get(4)?,
                 parent_id: row.get(5)?,
+                query: row.get(6)?,
+                content_hash: row.get(7)?,
+                anchor_hint: row.get(8)?,
             })
         })?;
 
@@ -133,6 +147,9 @@ mod tests {
             body: "This is a test comment".to_string(),
             created_at: "2026-04-01T10:00:00Z".to_string(),
             parent_id: parent_id.map(|s| s.to_string()),
+            query: None,
+            content_hash: None,
+            anchor_hint: None,
         }
     }
 
@@ -182,5 +199,26 @@ mod tests {
 
         db.delete_bookmark("bm-1").unwrap();
         assert!(db.get_comment("c-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn anchor_fields_round_trip() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-1")).unwrap();
+
+        let anchored = BookmarkComment {
+            query: Some("(call_expression) @target".into()),
+            content_hash: Some("abc123".into()),
+            anchor_hint: Some("L5-L5: helper(2)".into()),
+            ..test_comment("c-1", "bm-1", None)
+        };
+        db.insert_comment(&anchored).unwrap();
+        db.insert_comments(&[test_comment("c-2", "bm-1", Some("c-1"))]).unwrap();
+
+        let comments = db.list_comments_for_bookmark("bm-1").unwrap();
+        assert_eq!(comments[0], anchored);
+        assert!(comments[0].is_anchored());
+        assert!(!comments[1].is_anchored());
+        assert_eq!(db.get_comment("c-1").unwrap().unwrap(), anchored);
     }
 }

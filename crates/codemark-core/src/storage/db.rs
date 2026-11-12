@@ -43,6 +43,19 @@ const MIGRATION_025: &str =
     include_str!("../../../../migrations/V25__add_bookmark_grammar_source.sql");
 const MIGRATION_026: &str = include_str!("../../../../migrations/V26__add_artifact_link_kind.sql");
 const MIGRATION_027: &str = include_str!("../../../../migrations/V27__add_bookmark_forks.sql");
+const MIGRATION_028: &str = include_str!("../../../../migrations/V28__add_comment_anchor.sql");
+
+/// Whether `schema.table` has a column named `column`. Used to read packs and
+/// databases written by older versions, which lack columns added since.
+pub fn has_column(conn: &rusqlite::Connection, schema: &str, table: &str, column: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1, ?2) WHERE name = ?3",
+        rusqlite::params![table, schema, column],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -52,7 +65,7 @@ pub struct Database {
 
 impl Database {
     /// Current schema version supported by this crate.
-    pub const CURRENT_VERSION: i64 = 27;
+    pub const CURRENT_VERSION: i64 = 28;
 
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
@@ -149,6 +162,7 @@ impl Database {
             (25, MIGRATION_025),
             (26, MIGRATION_026),
             (27, MIGRATION_027),
+            (28, MIGRATION_028),
         ];
 
         for (version, sql) in migrations {
@@ -182,6 +196,14 @@ impl Database {
                         [],
                     );
                     res?;
+                } else if version == 28 {
+                    // Pure `ADD COLUMN` migrations, replayed idempotently: a
+                    // database rewound to an older `user_version` (old packs,
+                    // migration tests) may already hold these columns.
+                    let tx = conn.transaction()?;
+                    Self::add_columns_idempotent(&tx, sql)?;
+                    Self::set_schema_version(&tx, version)?;
+                    tx.commit()?;
                 } else {
                     let tx = conn.transaction()?;
                     tx.execute_batch(sql)?;
@@ -202,6 +224,29 @@ impl Database {
             Self::ensure_collection_embeddings_table_on(conn)?;
         }
 
+        Ok(())
+    }
+
+    /// Run a migration made only of `ALTER TABLE ... ADD COLUMN` statements,
+    /// skipping any column that already exists and any table that is absent.
+    fn add_columns_idempotent(tx: &rusqlite::Transaction, sql: &str) -> Result<()> {
+        let code: String = sql
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for statement in code.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            if let Err(e) = tx.execute_batch(statement) {
+                // Packs may omit optional tables entirely (the registry treats
+                // `bookmark_comments` as optional); nothing to extend there.
+                let message = e.to_string();
+                if message.contains("duplicate column name") || message.contains("no such table") {
+                    tracing::debug!(target: "codemark::db", statement, %message, "column skipped");
+                    continue;
+                }
+                return Err(e.into());
+            }
+        }
         Ok(())
     }
 
@@ -428,5 +473,24 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let fk: i64 = db.conn().query_row("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap();
         assert_eq!(fk, 1);
+    }
+
+    #[test]
+    fn has_column_detects_columns_per_schema() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        assert!(has_column(db.conn(), "main", "bookmark_comments", "query"));
+        assert!(!has_column(db.conn(), "main", "bookmark_comments", "no_such_column"));
+        assert!(!has_column(db.conn(), "main", "no_such_table", "query"));
+
+        // A V27-era table, as found in packs written before anchored comments.
+        db.conn()
+            .execute_batch(
+                "ATTACH DATABASE ':memory:' AS pack;
+                 CREATE TABLE pack.bookmark_comments (id TEXT, body TEXT);",
+            )
+            .unwrap();
+        assert!(!has_column(db.conn(), "pack", "bookmark_comments", "query"));
+        assert!(has_column(db.conn(), "pack", "bookmark_comments", "body"));
     }
 }

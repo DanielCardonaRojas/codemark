@@ -408,41 +408,53 @@ async fn import_pack(
             db.insert_annotation(&ann?)?;
         }
 
-        // Import comments with ID mapping to preserve threading
-        let mut com_stmt = reader.conn().prepare(
-            "SELECT id, bookmark_id, author, body, created_at, parent_id FROM bookmark_comments WHERE bookmark_id = ?1",
-        )?;
+        // Import comments with ID mapping to preserve threading. Packs written
+        // before V28 have no anchor columns; their comments are whole-bookmark.
+        let anchor_cols = if crate::storage::db::has_column(
+            reader.conn(),
+            "main",
+            "bookmark_comments",
+            "query",
+        ) {
+            "query, content_hash, anchor_hint"
+        } else {
+            "NULL, NULL, NULL"
+        };
+        let mut com_stmt = reader.conn().prepare(&format!(
+            "SELECT id, author, body, created_at, parent_id, {anchor_cols}
+             FROM bookmark_comments WHERE bookmark_id = ?1"
+        ))?;
         let rows = com_stmt.query_map([&old_id], |row: &rusqlite::Row| {
-            Ok((
-                row.get::<_, String>(0)?,         // old_id
-                row.get::<_, String>(2)?,         // author
-                row.get::<_, String>(3)?,         // body
-                row.get::<_, String>(4)?,         // created_at
-                row.get::<_, Option<String>>(5)?, // parent_id
-            ))
-        })?;
-
-        let mut comment_id_map = HashMap::new();
-        let mut pending_comments = Vec::new();
-
-        for row in rows {
-            let (old_comment_id, author, body, created_at, parent_id) = row?;
-            let new_comment_id = uuid::Uuid::new_v4().to_string();
-            comment_id_map.insert(old_comment_id, new_comment_id.clone());
-
-            pending_comments.push((new_comment_id, author, body, created_at, parent_id));
-        }
-
-        for (new_id, author, body, created_at, old_parent_id) in pending_comments {
-            let new_parent_id = old_parent_id.and_then(|id| comment_id_map.get(&id).cloned());
-            db.insert_comment(&crate::engine::bookmark::BookmarkComment {
-                id: new_id,
+            Ok(crate::engine::bookmark::BookmarkComment {
+                id: row.get(0)?,
                 bookmark_id: bookmark_id.clone(),
-                author,
-                body,
-                created_at,
-                parent_id: new_parent_id,
-            })?;
+                author: row.get(1)?,
+                body: row.get(2)?,
+                created_at: row.get(3)?,
+                parent_id: row.get(4)?,
+                query: row.get(5)?,
+                content_hash: row.get(6)?,
+                anchor_hint: row.get(7)?,
+            })
+        })?;
+        let pack_comments = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let comment_id_map: HashMap<String, String> = pack_comments
+            .iter()
+            .map(|c| (c.id.clone(), uuid::Uuid::new_v4().to_string()))
+            .collect();
+        let mut new_comments: Vec<_> = pack_comments
+            .into_iter()
+            .map(|c| crate::engine::bookmark::BookmarkComment {
+                id: comment_id_map[&c.id].clone(),
+                parent_id: c.parent_id.as_ref().and_then(|p| comment_id_map.get(p).cloned()),
+                ..c
+            })
+            .collect();
+        // Parents before replies, so the parent_id foreign key holds.
+        new_comments.sort_by_key(|c| c.parent_id.is_some());
+        for comment in &new_comments {
+            db.insert_comment(comment)?;
         }
 
         // Import resolutions

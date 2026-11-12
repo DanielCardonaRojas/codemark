@@ -128,29 +128,7 @@ pub fn generate_query(
     // 1. Select the tightest meaningful target node
     let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
-    // For fine-grained targeting, we want to descend into blocks to find the
-    // actual statement or expression.
-    while is_body_node(node.kind()) {
-        let mut found_child = false;
-        let mut cursor = node.walk();
-
-        for child in node.named_children(&mut cursor) {
-            if child.start_byte() < ctx.byte_range.1 && child.end_byte() > ctx.byte_range.0 {
-                node = child;
-                found_child = true;
-                break;
-            }
-        }
-
-        if !found_child {
-            break;
-        }
-
-        // If we found a node with semantic info, stop here
-        if extract_semantic_info(node, ctx.source).is_some() {
-            break;
-        }
-    }
+    node = descend_into_bodies(node, ctx.source, ctx.byte_range);
 
     // 2. Extract metadata
     let name = extract_name_info(node, ctx.source)
@@ -166,6 +144,98 @@ pub fn generate_query(
         target_name: name,
         byte_range: (node.start_byte(), node.end_byte()),
     })
+}
+
+/// Step from a body node (`block`, `class_body`, ...) down to the child that
+/// overlaps `byte_range`, so a selection inside a block targets the statement
+/// rather than the whole block. Stops early at a node with semantic info.
+fn descend_into_bodies<'t>(
+    mut node: Node<'t>,
+    source: &[u8],
+    byte_range: (usize, usize),
+) -> Node<'t> {
+    while is_body_node(node.kind()) {
+        let mut cursor = node.walk();
+        let next = node
+            .named_children(&mut cursor)
+            .find(|child| child.start_byte() < byte_range.1 && child.end_byte() > byte_range.0);
+        let Some(child) = next else { break };
+        node = child;
+        if extract_semantic_info(node, source).is_some() {
+            break;
+        }
+    }
+    node
+}
+
+/// Generate a query for the node at `byte_range` that is unique *inside*
+/// `scope`, with its structural path stopping below `scope`.
+///
+/// This is how anchored comments get their query: `scope` is the bookmark's
+/// deepest landmark, and the comment is resolved later by running the query
+/// rooted at that landmark ([`matcher::run_query_in`]). Because uniqueness only
+/// has to hold inside the landmark, the queries stay short.
+///
+/// When no query for the selected node is unique, the target widens to its
+/// parent, never past `scope`. If even that leaves duplicates, the last
+/// candidate is returned anyway: resolution breaks the tie by content hash.
+///
+/// Errors when `byte_range` is not inside `scope`.
+pub fn generate_scoped_query(
+    tree: &Tree,
+    source: &[u8],
+    byte_range: (usize, usize),
+    scope: Node,
+    language: &Language,
+    profile: &Profile,
+) -> Result<GeneratedQuery> {
+    if byte_range.0 < scope.start_byte() || byte_range.1 > scope.end_byte() {
+        return Err(Error::Input(format!(
+            "range {}..{} is outside the scope node `{}` ({}..{})",
+            byte_range.0,
+            byte_range.1,
+            scope.kind(),
+            scope.start_byte(),
+            scope.end_byte()
+        )));
+    }
+    let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
+
+    let first = find_tightest_node(&scope, source, byte_range)?;
+    let mut target = descend_into_bodies(first, source, byte_range);
+    // The widest ambiguous candidate so far; every iteration that does not
+    // return assigns it.
+    let mut last;
+    loop {
+        match disambiguate_query_in(target, &ctx, Some(scope)) {
+            Ok(query) => return Ok(scoped_result(target, query, source)),
+            Err(Error::AmbiguousQuery(_)) => {
+                let path = build_structural_path(target, source, profile, None, Some(scope));
+                last = (target, build_tier1_query(&path));
+            }
+            Err(e) => return Err(e),
+        }
+        if target.id() == scope.id() {
+            break;
+        }
+        match target.parent() {
+            Some(parent) => target = parent,
+            None => break,
+        }
+    }
+    let (target, query) = last;
+    Ok(scoped_result(target, query, source))
+}
+
+fn scoped_result(target: Node, query: String, source: &[u8]) -> GeneratedQuery {
+    GeneratedQuery {
+        query,
+        target_node_type: target.kind().to_string(),
+        target_name: extract_name_info(target, source)
+            .map(|info| info.text)
+            .or_else(|| extract_identifier_from_node(target, source)),
+        byte_range: (target.start_byte(), target.end_byte()),
+    }
 }
 
 /// Find the tightest meaningful node for a given byte range.
@@ -337,6 +407,13 @@ fn get_sticky_tag(node_kind: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether `node` is a landmark a comment scope can stop at: a landmark kind
+/// for this profile that is not a local declaration inside a function body.
+/// The same test the path builder uses to mark `is_landmark` entries.
+pub(crate) fn is_scope_landmark(node: Node, profile: &Profile) -> bool {
+    is_landmark_kind(node.kind(), profile) && !is_local_declaration(node)
+}
+
 /// Check if a declaration node is likely a local variable/constant.
 fn is_local_declaration(node: Node) -> bool {
     let kind = node.kind();
@@ -390,10 +467,27 @@ fn build_base_query(
 
 /// Helper to ensure a query is unique and anchored by walking up parents.
 fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<String> {
+    disambiguate_query_in(target_node, ctx, None)
+}
+
+/// [`disambiguate_query`], optionally confined to the subtree at `scope`.
+///
+/// With a scope the path stops below it and uniqueness is measured inside it
+/// only. The named-landmark requirement is dropped too: the scope node is
+/// the anchor, so the query needs no landmark of its own.
+fn disambiguate_query_in(
+    target_node: Node,
+    ctx: &QueryContext<'_>,
+    scope: Option<Node>,
+) -> Result<String> {
     // Scoped to this call so the memoized answers cannot outlive the grammar
     // they were measured against. See [`FieldProbe`].
     let probe = FieldProbe::new(ctx.language);
-    let mut path = build_structural_path(target_node, ctx.source, ctx.profile, Some(&probe));
+    let mut path = build_structural_path(target_node, ctx.source, ctx.profile, Some(&probe), scope);
+    let search_root = scope.unwrap_or(ctx.root);
+    let count = |q: &str| -> Result<usize> {
+        Ok(matcher::run_query_in(q, search_root, ctx.source, ctx.language)?.len())
+    };
 
     if path.is_empty() {
         // Fallback to simple base query if no path can be built
@@ -442,9 +536,7 @@ fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<Strin
     };
 
     let query = build_tier1_query(&current_path);
-    if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1
-        && (has_named_landmark(&current_path) || depth == 1)
-    {
+    if count(&query)? == 1 && (scope.is_some() || has_named_landmark(&current_path) || depth == 1) {
         return Ok(query);
     }
 
@@ -453,7 +545,7 @@ fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<Strin
         if path[i].is_landmark {
             current_path[i].name_info = names[i].clone();
             let query = build_tier1_query(&current_path);
-            if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+            if count(&query)? == 1 {
                 return Ok(query);
             }
         }
@@ -464,26 +556,26 @@ fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<Strin
         current_path[i].name_info = names[i].clone();
     }
     let query = build_tier1_query(&current_path);
-    let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
+    let match_count = count(&query)?;
     if match_count == 1 {
         return Ok(query);
     }
 
     // 4. Final resort: try unnamed path (only if naming the target didn't work and we reach the root)
     let query = build_tier1_query(&path);
-    if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+    if count(&query)? == 1 {
         return Ok(query);
     }
 
     // If still not unique, use the base_query if it was unique,
     // otherwise return the best we could do (which might still be ambiguous)
     let final_query = build_tier1_query(&path);
-    let final_matches = matcher::run_query(&final_query, ctx.tree, ctx.source, ctx.language)?;
+    let final_count = count(&final_query)?;
 
-    if final_matches.len() != 1 {
+    if final_count != 1 {
         return Err(Error::AmbiguousQuery(format!(
             "Generated query matched {} nodes, expected 1. Try selecting a more specific range.",
-            final_matches.len()
+            final_count
         )));
     }
 
@@ -505,11 +597,17 @@ pub fn generate_query_for_node(
 /// Body nodes (class_body, etc.) are included to ensure the query nesting matches the AST.
 /// Wrapper nodes (export_statement, decorated_definition) are skipped — they don't have
 /// queryable name fields.
+///
+/// `stop_at` confines the path to a subtree: the ascent stops below that node,
+/// so the outermost pattern is one of its descendants and the query can be run
+/// rooted at it ([`matcher::run_query_in`]). When the target *is* `stop_at`,
+/// the path is that single node. `None` walks up to the root as before.
 fn build_structural_path(
     target: Node,
     source: &[u8],
     profile: &Profile,
     probe: Option<&FieldProbe<'_>>,
+    stop_at: Option<Node>,
 ) -> Vec<PathEntry> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
         eprintln!(
@@ -610,8 +708,14 @@ fn build_structural_path(
             path.push(entry);
         }
 
+        if stop_at.is_some_and(|stop| stop.id() == current.id()) {
+            break;
+        }
         match current.parent() {
-            Some(parent) if !is_root_node(parent.kind()) => {
+            Some(parent)
+                if !is_root_node(parent.kind())
+                    && !stop_at.is_some_and(|stop| stop.id() == parent.id()) =>
+            {
                 current = parent;
             }
             _ => break,
@@ -1524,7 +1628,7 @@ mod tests {
         assert!(!DECLARATION_TYPES.contains(&"block"));
 
         let default_profile = Profile::default();
-        let default_path = build_structural_path(target, source, &default_profile, None);
+        let default_path = build_structural_path(target, source, &default_profile, None, None);
         let default_block = default_path.iter().find(|e| e.node_type == "block");
         assert!(default_block.is_some(), "expected a `block` entry in the path");
         assert!(
@@ -1533,7 +1637,7 @@ mod tests {
         );
 
         let custom_profile = Profile { landmark_kinds: vec!["block".into()], ..Profile::default() };
-        let custom_path = build_structural_path(target, source, &custom_profile, None);
+        let custom_path = build_structural_path(target, source, &custom_profile, None, None);
         let custom_block = custom_path.iter().find(|e| e.node_type == "block").unwrap();
         assert!(
             custom_block.is_landmark,

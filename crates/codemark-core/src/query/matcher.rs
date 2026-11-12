@@ -1,4 +1,4 @@
-use tree_sitter::{Language, Query, QueryCursor, StreamingIterator, Tree};
+use tree_sitter::{Language, Node, Query, QueryCursor, StreamingIterator, Tree};
 
 use crate::error::{Error, Result};
 
@@ -21,6 +21,22 @@ pub fn run_query(
     source: &[u8],
     language: &Language,
 ) -> Result<Vec<MatchResult>> {
+    run_query_in(query_str, tree.root_node(), source, language)
+}
+
+/// Compile and run a tree-sitter query confined to the subtree rooted at
+/// `scope` (the node itself included), returning all `@target` matches whose
+/// target lies inside it.
+///
+/// The scoping primitive for anchored comments: a comment query is relative to
+/// its bookmark's deepest landmark, so it only has to be unique inside that
+/// node. Passing `tree.root_node()` is exactly [`run_query`].
+pub fn run_query_in(
+    query_str: &str,
+    scope: Node,
+    source: &[u8],
+    language: &Language,
+) -> Result<Vec<MatchResult>> {
     let query = Query::new(language, query_str)
         .map_err(|e| Error::TreeSitter(format!("invalid query: {e}")))?;
 
@@ -29,7 +45,7 @@ pub fn run_query(
         .ok_or_else(|| Error::TreeSitter("query has no @target capture".into()))?;
 
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, tree.root_node(), source);
+    let mut matches = cursor.matches(&query, scope, source);
     let mut results = Vec::new();
 
     while let Some(m) = matches.next() {
@@ -49,6 +65,11 @@ pub fn run_query(
         }
 
         if let Some(node) = target_node {
+            // A pattern rooted inside `scope` can still capture outside it
+            // only through anchors; keep the contract strict regardless.
+            if node.start_byte() < scope.start_byte() || node.end_byte() > scope.end_byte() {
+                continue;
+            }
             let text = std::str::from_utf8(&source[node.byte_range()]).unwrap_or("").to_string();
             results.push(MatchResult {
                 node_text: text,
@@ -109,6 +130,30 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert!(results[0].node_text.contains("hello"));
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn run_query_in_confines_matches_to_scope() {
+        let source = b"fn foo() { let x = 1; }\nfn bar() { let x = 2; }";
+        let rust = crate::testing::grammar("rust");
+        let mut parser = Parser::new(rust.clone()).unwrap();
+        let tree = parser.parse(source).unwrap();
+        let lang = rust.tree_sitter_language();
+        let query = "(let_declaration) @target";
+
+        assert_eq!(run_query(query, &tree, source, &lang).unwrap().len(), 2);
+
+        let foo = tree.root_node().named_child(0).unwrap();
+        assert_eq!(foo.kind(), "function_item");
+        let scoped = run_query_in(query, foo, source, &lang).unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert!(scoped[0].node_text.contains("= 1"));
+
+        // The scope node itself can be the target.
+        let itself = run_query_in("(function_item) @target", foo, source, &lang).unwrap();
+        assert_eq!(itself.len(), 1);
+        assert!(itself[0].node_text.starts_with("fn foo"));
     }
 
     fn dump_ast_with_limit(

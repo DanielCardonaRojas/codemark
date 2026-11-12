@@ -15,7 +15,8 @@ impl CommentRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, bookmark_id, author, body, created_at, parent_id
+                "SELECT id, bookmark_id, author, body, created_at, parent_id,
+                        query, content_hash, anchor_hint
                  FROM bookmark_comments 
                  WHERE bookmark_id = ?1
                  ORDER BY created_at ASC",
@@ -28,6 +29,9 @@ impl CommentRepo {
                     body: row.get(3)?,
                     created_at: row.get(4)?,
                     parent_id: row.get(5)?,
+                    query: row.get(6)?,
+                    content_hash: row.get(7)?,
+                    anchor_hint: row.get(8)?,
                 })
             })?;
             let results: Vec<BookmarkComment> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -42,8 +46,9 @@ impl CommentRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             conn.execute(
-                "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO bookmark_comments
+                    (id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 rusqlite::params![
                     comment.id,
                     comment.bookmark_id,
@@ -51,6 +56,9 @@ impl CommentRepo {
                     comment.body,
                     comment.created_at,
                     comment.parent_id,
+                    comment.query,
+                    comment.content_hash,
+                    comment.anchor_hint,
                 ],
             )?;
             Ok::<_, rusqlite::Error>(())

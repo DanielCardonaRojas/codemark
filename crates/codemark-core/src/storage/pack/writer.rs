@@ -161,9 +161,20 @@ impl Packer {
         // 4. Insert comments
         for com in &payload.comments {
             conn.execute(
-                "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![com.id, com.bookmark_id, com.author, com.body, com.created_at, com.parent_id],
+                "INSERT INTO bookmark_comments
+                    (id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    com.id,
+                    com.bookmark_id,
+                    com.author,
+                    com.body,
+                    com.created_at,
+                    com.parent_id,
+                    com.query,
+                    com.content_hash,
+                    com.anchor_hint,
+                ],
             )?;
         }
 

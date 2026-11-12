@@ -75,6 +75,16 @@ pub enum Error {
     #[error("ambiguous query: {0}")]
     AmbiguousQuery(String),
 
+    /// An anchored comment targets code outside its bookmark's deepest
+    /// landmark (the innermost function, method, class... around the
+    /// bookmark). Lines are 1-indexed.
+    #[error(
+        "the selected code is outside this bookmark's scope. Comments can only \
+         target code inside `{landmark}` (lines {start_line}-{end_line}). To \
+         comment on other code, bookmark it and add both bookmarks to one collection."
+    )]
+    CommentOutOfScope { landmark: String, start_line: usize, end_line: usize },
+
     /// Standard I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -101,7 +111,7 @@ impl Error {
         match self {
             Error::NotInitialized => EXIT_INPUT_ERROR,
             Error::NotImplemented(_) | Error::Operation(_) => EXIT_OPERATION_FAILED,
-            Error::Input(_) | Error::Io(_) => EXIT_INPUT_ERROR,
+            Error::Input(_) | Error::Io(_) | Error::CommentOutOfScope { .. } => EXIT_INPUT_ERROR,
             // The input was fine; the environment is missing a grammar. Treated
             // as operational so a script can tell "you asked for something
             // impossible" from "install this and retry".
