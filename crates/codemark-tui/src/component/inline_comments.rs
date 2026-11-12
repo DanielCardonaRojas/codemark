@@ -21,6 +21,10 @@ pub struct InlineThread {
     pub anchor_start: usize,
     /// Last line of the anchored node (0-indexed). The bubble goes below it.
     pub anchor_end: usize,
+    /// Char column where the node starts on `anchor_start`.
+    pub start_col: usize,
+    /// Char column just past the node's end on `anchor_end`.
+    pub end_col: usize,
     /// The root comment first, then its replies in order.
     pub entries: Vec<InlineComment>,
 }
@@ -52,11 +56,13 @@ pub(crate) enum BubbleLine {
         when: String,
     },
     Body(String),
-    /// A reply's first row carries its author; wrapped rows don't.
-    Reply {
-        author: Option<String>,
-        text: String,
+    /// A reply's header: who wrote it and when.
+    ReplyHead {
+        author: String,
+        when: String,
     },
+    /// A row of a reply's body, indented under its header.
+    ReplyBody(String),
     Bottom,
 }
 
@@ -95,6 +101,9 @@ impl RowLayout {
 /// Columns a bubble row spends on chrome around its text: a space after the
 /// gutter, `│ ` on the left and ` │` on the right.
 pub(crate) const BUBBLE_CHROME: usize = 5;
+
+/// Columns a reply's body is indented under its `↳ author` header.
+const REPLY_INDENT: usize = 2;
 
 /// Build the display rows for `line_count` source lines.
 ///
@@ -145,12 +154,11 @@ fn bubble_lines(thread: &InlineThread, width: usize) -> Vec<BubbleLine> {
         lines.extend(wrap(paragraph, width).into_iter().map(BubbleLine::Body));
     }
     for reply in replies {
-        let prefix = format!("↳ {}: ", reply.author);
-        let room = width.saturating_sub(prefix.width());
-        let text = reply.body.lines().collect::<Vec<_>>().join(" ");
-        for (i, chunk) in wrap(&text, room).into_iter().enumerate() {
-            let author = (i == 0).then(|| reply.author.clone());
-            lines.push(BubbleLine::Reply { author, text: chunk });
+        lines
+            .push(BubbleLine::ReplyHead { author: reply.author.clone(), when: reply.when.clone() });
+        for paragraph in reply.body.lines() {
+            let room = width.saturating_sub(REPLY_INDENT);
+            lines.extend(wrap(paragraph, room).into_iter().map(BubbleLine::ReplyBody));
         }
     }
     lines.push(BubbleLine::Bottom);
@@ -250,28 +258,23 @@ pub(crate) fn render_bubble_line(
             spans.push(pad(text.width()));
             spans.push(Span::styled(" │", border));
         }
-        BubbleLine::Reply { author, text } => {
+        BubbleLine::ReplyHead { author, when } => {
             spans.push(Span::styled("│ ", border));
-            let prefix_width = match author {
-                Some(author) => {
-                    spans.push(Span::styled("↳ ", Style::default().fg(style.dim)));
-                    spans.push(Span::styled(
-                        format!("{author}: "),
-                        Style::default().fg(style.accent),
-                    ));
-                    format!("↳ {author}: ").width()
-                }
-                None => {
-                    spans.push(Span::raw("  "));
-                    2
-                }
-            };
+            spans.push(Span::styled("↳ ", Style::default().fg(style.dim)));
+            spans.push(Span::styled(author.clone(), Style::default().fg(style.accent)));
+            spans.push(Span::styled(format!(" · {when}"), Style::default().fg(style.dim)));
+            spans.push(pad(format!("↳ {author} · {when}").width()));
+            spans.push(Span::styled(" │", border));
+        }
+        BubbleLine::ReplyBody(text) => {
+            spans.push(Span::styled("│ ", border));
+            spans.push(Span::raw(" ".repeat(REPLY_INDENT)));
             spans.push(Span::styled(text.clone(), text_style));
-            spans.push(pad(prefix_width + text.width()));
+            spans.push(pad(REPLY_INDENT + text.width()));
             spans.push(Span::styled(" │", border));
         }
         BubbleLine::Bottom => {
-            let hint = if focused { " r reply · z fold " } else { "" };
+            let hint = if focused { " r reply · z fold · n next " } else { "" };
             spans.push(Span::styled("└", border));
             spans.push(Span::styled(
                 "─".repeat((box_width - 2).saturating_sub(hint.width())),
@@ -293,6 +296,8 @@ mod tests {
             root_id: id.into(),
             anchor_start: start,
             anchor_end: end,
+            start_col: 0,
+            end_col: 1,
             entries: bodies
                 .iter()
                 .map(|b| InlineComment {
@@ -308,12 +313,13 @@ mod tests {
     fn bubbles_follow_their_anchor_line() {
         let threads = vec![thread("t1", 1, 2, &["hello", "reply"])];
         let layout = build_layout(5, &threads, &HashSet::new(), 40);
-        // Code 0,1,2 then 4 bubble rows (top, body, reply, bottom), then code 3,4.
-        assert_eq!(layout.total_rows(), 9);
+        // Code 0,1,2 then 5 bubble rows (top, body, reply head, reply body,
+        // bottom), then code 3,4.
+        assert_eq!(layout.total_rows(), 10);
         assert_eq!(layout.row_of(2), 2);
-        assert_eq!(layout.row_of(3), 7);
+        assert_eq!(layout.row_of(3), 8);
         assert_eq!(layout.rows[3], DisplayRow::Bubble { thread: 0, row: 0 });
-        assert_eq!(layout.bubbles[0].len(), 4);
+        assert_eq!(layout.bubbles[0].len(), 5);
     }
 
     #[test]

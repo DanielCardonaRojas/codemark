@@ -57,6 +57,7 @@ toml = { workspace = true }
 toml_edit = "0.22"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+chrono = { workspace = true }
 futures = "0.3"
 copypasta = "0.10"
 open = "5.3.5"

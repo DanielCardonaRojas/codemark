@@ -43,6 +43,12 @@ pub(crate) fn build_inline_threads(
         }
     };
 
+    let now = chrono::Local::now();
+    let comment = |c: &BookmarkComment| InlineComment {
+        author: c.author.clone(),
+        when: relative_time(&c.created_at, now),
+        body: c.body.clone(),
+    };
     roots
         .into_iter()
         .zip(states)
@@ -53,23 +59,36 @@ pub(crate) fn build_inline_threads(
                 root_id: root.id.clone(),
                 anchor_start: range.start_line,
                 anchor_end: range.end_line,
-                entries: std::iter::once(root).chain(replies).map(inline_comment).collect(),
+                start_col: char_column(code, range.byte_range.0),
+                end_col: char_column(code, range.byte_range.1),
+                entries: std::iter::once(root).chain(replies).map(comment).collect(),
             })
         })
         .collect()
 }
 
-fn inline_comment(c: &BookmarkComment) -> InlineComment {
-    InlineComment {
-        author: c.author.clone(),
-        when: short_time(&c.created_at),
-        body: c.body.clone(),
-    }
+/// Char column of byte `offset` within its line.
+fn char_column(code: &str, offset: usize) -> usize {
+    let offset = offset.min(code.len());
+    let line_start = code[..offset].rfind('\n').map_or(0, |i| i + 1);
+    code[line_start..offset].chars().count()
 }
 
-/// `2026-11-12T04:05:32.685Z` → `2026-11-12 04:05`.
-fn short_time(iso: &str) -> String {
-    iso.get(..16).map(|s| s.replace('T', " ")).unwrap_or_else(|| iso.to_string())
+/// A comment timestamp relative to `now`, in local time: `today 14:05`,
+/// `yesterday 09:30`, `Nov 3` this year, else `2025-11-03`. Unparseable
+/// timestamps are shown as stored.
+pub(crate) fn relative_time(iso: &str, now: chrono::DateTime<chrono::Local>) -> String {
+    let Ok(at) = chrono::DateTime::parse_from_rfc3339(iso) else { return iso.to_string() };
+    let at = at.with_timezone(&chrono::Local);
+    let days = (now.date_naive() - at.date_naive()).num_days();
+    match days {
+        0 => format!("today {}", at.format("%H:%M")),
+        1 => format!("yesterday {}", at.format("%H:%M")),
+        _ if at.format("%Y").to_string() == now.format("%Y").to_string() => {
+            at.format("%b %-d").to_string()
+        }
+        _ => at.format("%Y-%m-%d").to_string(),
+    }
 }
 
 /// Byte span of lines `start..=end` (0-indexed) with surrounding whitespace
@@ -114,8 +133,24 @@ mod tests {
     }
 
     #[test]
-    fn short_time_keeps_date_and_minutes() {
-        assert_eq!(short_time("2026-11-12T04:05:32.685Z"), "2026-11-12 04:05");
-        assert_eq!(short_time("bad"), "bad");
+    fn relative_time_abbreviates_recent_days() {
+        use chrono::TimeZone;
+        let now = chrono::Local.with_ymd_and_hms(2026, 11, 12, 15, 0, 0).unwrap();
+        let at = |y, m, d, h, min| {
+            chrono::Local.with_ymd_and_hms(y, m, d, h, min, 0).unwrap().to_rfc3339()
+        };
+        assert_eq!(relative_time(&at(2026, 11, 12, 9, 5), now), "today 09:05");
+        assert_eq!(relative_time(&at(2026, 11, 11, 23, 59), now), "yesterday 23:59");
+        assert_eq!(relative_time(&at(2026, 11, 3, 8, 0), now), "Nov 3");
+        assert_eq!(relative_time(&at(2025, 11, 3, 8, 0), now), "2025-11-03");
+        assert_eq!(relative_time("bad", now), "bad");
+    }
+
+    #[test]
+    fn char_column_counts_chars_within_the_line() {
+        let code = "ab\n  é x";
+        assert_eq!(char_column(code, 0), 0);
+        assert_eq!(char_column(code, 3), 0);
+        assert_eq!(char_column(code, code.find('x').unwrap()), 4);
     }
 }

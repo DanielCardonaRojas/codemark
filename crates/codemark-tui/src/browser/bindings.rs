@@ -111,7 +111,9 @@ impl BrowserLayout {
                 if self.code_preview_focused() {
                     bindings.push(("c", "Comment on code"));
                     bindings.push(("r", "Reply to comment"));
-                    bindings.push(("z", "Fold comment"));
+                    bindings.push(("z", "Fold comment / line"));
+                    bindings.push(("Z", "Fold all comments"));
+                    bindings.push(("n/N", "Next / previous comment"));
                 }
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {

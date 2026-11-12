@@ -658,6 +658,77 @@ impl CodePreview {
         }
     }
 
+    /// `n` / `N`: jump to the next (or previous) comment thread in display
+    /// order, wrapping around. A folded target is unfolded so it can be read.
+    /// Returns `false` when there are no threads.
+    fn jump_to_thread(&mut self, forward: bool) -> bool {
+        let count = self.inline.threads.len();
+        if count == 0 {
+            return false;
+        }
+        let line = self.selected_line.unwrap_or(0);
+        let target = match (self.cursor_thread(), forward) {
+            (Some(t), true) => (t + 1) % count,
+            (Some(t), false) => (t + count - 1) % count,
+            (None, true) => {
+                (0..count).find(|&i| self.thread_line(&self.inline.threads[i]) >= line).unwrap_or(0)
+            }
+            (None, false) => (0..count)
+                .rev()
+                .find(|&i| self.thread_line(&self.inline.threads[i]) < line)
+                .unwrap_or(count - 1),
+        };
+        let id = self.inline.threads[target].root_id.clone();
+        if self.inline.folded.remove(&id) {
+            self.invalidate_layout();
+        }
+        self.selected_line = Some(self.thread_line(&self.inline.threads[target]));
+        self.inline.cursor_on = Some(id);
+        self.scroll_to_cursor();
+        true
+    }
+
+    /// `Z`: fold every thread, or unfold them all when all are folded.
+    fn toggle_fold_all(&mut self) -> bool {
+        if self.inline.threads.is_empty() {
+            return false;
+        }
+        let ids: Vec<String> = self.inline.threads.iter().map(|t| t.root_id.clone()).collect();
+        let all_folded = ids.iter().all(|id| self.inline.folded.contains(id));
+        self.relayout_keeping_cursor(|preview| {
+            if all_folded {
+                preview.inline.folded.clear();
+            } else {
+                preview.inline.folded.extend(ids);
+            }
+        });
+        true
+    }
+
+    /// Put the cursor on whatever is drawn at screen row `y`: a code line or
+    /// a comment bubble. Returns whether the row held anything.
+    fn click_row(&mut self, y: u16) -> bool {
+        let area = self.last_area.get();
+        let height = area.height as usize;
+        let offset = (self.scroll_offset as usize).min(self.total_rows().saturating_sub(height));
+        self.scroll_offset = offset as u16;
+        let row = offset + y.saturating_sub(area.y) as usize;
+        let Some(&display_row) = self.layout().rows.get(row) else { return false };
+        match display_row {
+            DisplayRow::Code(line) => {
+                self.selected_line = Some(line);
+                self.inline.cursor_on = None;
+                self.clamp_cursor_col();
+            }
+            DisplayRow::Bubble { thread, .. } => {
+                let thread = &self.inline.threads[thread];
+                self.selected_line = Some(self.thread_line(thread));
+                self.inline.cursor_on = Some(thread.root_id.clone());
+            }
+        }
+        true
+    }
+
     /// Apply `change` (which alters threads or folds), then shift the scroll
     /// offset so the cursor's line stays on the same screen row even when
     /// rows above it appeared or vanished.
@@ -809,16 +880,26 @@ impl Component for CodePreview {
             }
         }
 
-        let focused_anchor = focused_thread
-            .map(|t| (self.inline.threads[t].anchor_start, self.inline.threads[t].anchor_end));
-        // The cursor is on a code line, or on a whole bubble.
+        // The focused comment's node as (display row, from col, to col).
+        let node_rows: Vec<(usize, usize, usize)> = focused_thread
+            .map(|t| {
+                let t = &self.inline.threads[t];
+                (t.anchor_start..=t.anchor_end)
+                    .map(|line| {
+                        let text = self.code.lines().nth(line).unwrap_or("");
+                        let indent = text.chars().take_while(|c| c.is_whitespace()).count();
+                        let from = if line == t.anchor_start { t.start_col } else { indent };
+                        let to =
+                            if line == t.anchor_end { t.end_col } else { text.chars().count() };
+                        (layout.row_of(line), from, to)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // The cursor is on a code line, or on a bubble (shown by its border).
         let cursor_bubble = cursor_thread.and_then(|t| layout.bubble_rows(t));
         let selected_row =
             self.selected_line.filter(|_| cursor_bubble.is_none()).map(|line| layout.row_of(line));
-        // Code rows (not bubble rows) of the focused comment's anchored lines.
-        let anchor_rows: Vec<usize> = focused_anchor
-            .map(|(start, end)| (start..=end).map(|line| layout.row_of(line)).collect())
-            .unwrap_or_default();
         drop(layout);
         drop(cached); // Drop cached before rendering
 
@@ -835,12 +916,6 @@ impl Component for CodePreview {
             }
         };
 
-        // The focused comment's anchored code gets a tint, so it is clear what
-        // the comment points at even when the node spans many lines.
-        for row in anchor_rows {
-            paint_row(buf, row, crate::theme::COMMENT_ANCHOR_BG);
-        }
-
         // Highlight the selected line's full-width background so it reads the
         // same as the list panes' selected row (see `crate::theme::SELECTION_BG`).
         // Painted after the paragraph and before the scrollbar so the scrollbar
@@ -848,9 +923,22 @@ impl Component for CodePreview {
         if let Some(row) = selected_row {
             paint_row(buf, row, crate::theme::SELECTION_BG);
         }
-        if let Some((first, last)) = cursor_bubble {
-            for row in first..=last {
-                paint_row(buf, row, crate::theme::SELECTION_BG);
+        // The focused comment's node: just its characters, over the cursor
+        // line's background, so the exact target reads at a glance.
+        let code_x = code_area.x + self.gutter_width();
+        for (row, from, to) in node_rows {
+            if row < offset || row - offset >= height {
+                continue;
+            }
+            let y = code_area.y + (row - offset) as u16;
+            for col in from..to.max(from + 1) {
+                let x = code_x + col as u16;
+                if x >= code_area.right().saturating_sub(1) {
+                    break;
+                }
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_bg(crate::theme::COMMENT_ANCHOR_BG);
+                }
             }
         }
 
@@ -926,6 +1014,9 @@ impl Component for CodePreview {
                         true
                     }
                     ratatui::crossterm::event::KeyCode::Char('z') => self.toggle_fold(),
+                    ratatui::crossterm::event::KeyCode::Char('Z') => self.toggle_fold_all(),
+                    ratatui::crossterm::event::KeyCode::Char('n') => self.jump_to_thread(true),
+                    ratatui::crossterm::event::KeyCode::Char('N') => self.jump_to_thread(false),
                     ratatui::crossterm::event::KeyCode::Enter
                     | ratatui::crossterm::event::KeyCode::Char('v') => {
                         self.selection_mode = !self.selection_mode;
@@ -972,6 +1063,9 @@ impl Component for CodePreview {
                     area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::Down(
+                        ratatui::crossterm::event::MouseButton::Left,
+                    ) if is_hovered => self.click_row(mouse.row),
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
                         let height = area.height as usize;
                         let total_rows = self.total_rows();
@@ -1327,6 +1421,8 @@ mod tests {
             root_id: id.into(),
             anchor_start: start,
             anchor_end: end,
+            start_col: 0,
+            end_col: 5,
             entries: bodies
                 .iter()
                 .map(|b| crate::component::InlineComment {
@@ -1352,9 +1448,10 @@ mod tests {
         assert!(row_text(&buf, 1).contains("line1"));
         assert!(row_text(&buf, 2).contains("┌ claude"), "{}", row_text(&buf, 2));
         assert!(row_text(&buf, 3).contains("lex runs on every call"));
-        assert!(row_text(&buf, 4).contains("↳ claude: agreed"), "{}", row_text(&buf, 4));
-        assert!(row_text(&buf, 5).contains("└"));
-        assert!(row_text(&buf, 6).contains("line2"), "code resumes after the bubble");
+        assert!(row_text(&buf, 4).contains("↳ claude · 2026-11-12 10:00"), "reply has a date");
+        assert!(row_text(&buf, 5).contains("  agreed"), "reply body sits under its header");
+        assert!(row_text(&buf, 6).contains("└"));
+        assert!(row_text(&buf, 7).contains("line2"), "code resumes after the bubble");
     }
 
     #[test]
@@ -1381,21 +1478,31 @@ mod tests {
     }
 
     #[test]
-    fn focused_thread_tints_its_anchor_and_shows_key_hints() {
-        let mut preview = CodePreview::new(numbered_code(8), "txt");
+    fn focused_thread_highlights_just_its_node_and_shows_key_hints() {
+        let mut preview = CodePreview::new("fn a() {\n    call(x);\n}\n".to_string(), "txt");
         preview.set_focus(true);
         render_to_buffer(&preview, 60, 14);
-        preview.set_threads(vec![thread("t1", 1, 2, &["spans two lines"])]);
-        preview.jump_to_line(2);
-        assert_eq!(preview.focused_thread_id(), Some("t1"));
+        // Anchored to `call(x)`: line 1, chars 4..11.
+        let mut t = thread("t1", 1, 1, &["why call here?"]);
+        (t.start_col, t.end_col) = (4, 11);
+        preview.set_threads(vec![t]);
+        preview.jump_to_line(1);
+        assert_eq!(preview.focused_thread_id(), Some("t1"), "cursor on the node's line");
         let buf = render_to_buffer(&preview, 60, 14);
 
-        let line1_row = (0..14).find(|&y| row_text(&buf, y).contains("line1")).unwrap();
-        assert_eq!(row_bg(&buf, line1_row), crate::theme::COMMENT_ANCHOR_BG);
-        assert!((0..14).any(|y| row_text(&buf, y).contains("r reply · z fold")));
+        let gutter = preview.gutter_width();
+        let bg = |x: u16| buf[(x, 1)].bg;
+        assert_eq!(bg(gutter + 4), crate::theme::COMMENT_ANCHOR_BG, "node start");
+        assert_eq!(bg(gutter + 10), crate::theme::COMMENT_ANCHOR_BG, "node end");
+        assert_eq!(bg(gutter + 3), crate::theme::SELECTION_BG, "indent stays the cursor line");
+        assert_eq!(bg(gutter + 11), crate::theme::SELECTION_BG, "`;` is not part of the node");
+        assert!((0..14).any(|y| row_text(&buf, y).contains("r reply · z fold · n next")));
 
-        preview.jump_to_line(6);
+        // Off the node's lines, nothing is highlighted.
+        preview.jump_to_line(2);
         assert_eq!(preview.focused_thread_id(), None);
+        let buf = render_to_buffer(&preview, 60, 14);
+        assert_ne!(buf[(gutter + 4, 1)].bg, crate::theme::COMMENT_ANCHOR_BG);
     }
 
     #[test]
@@ -1436,14 +1543,15 @@ mod tests {
         render_to_buffer(&preview, 50, 10);
         preview.set_threads(vec![thread("t1", 0, 0, &["body", "reply"])]);
         let buf = render_to_buffer(&preview, 50, 10);
-        // Rows 1..=4: top, body, reply, bottom. The scrollbar owns column 49.
+        // Rows 1..=5: top, body, reply head, reply body, bottom. The
+        // scrollbar owns column 49.
         assert_eq!(cell_symbol(&buf, 48, 1), "┐", "{}", row_text(&buf, 1));
-        for y in 2..=3 {
+        for y in 2..=4 {
             let row = row_text(&buf, y);
             assert_eq!(row.matches('│').count(), 2, "left and right border: {row}");
         }
-        assert!(row_text(&buf, 4).contains('┘'));
-        for y in 1..=4 {
+        assert!(row_text(&buf, 5).contains('┘'));
+        for y in 1..=5 {
             let edge = cell_symbol(&buf, 48, y);
             assert!(
                 edge == "┐" || edge == "│" || edge == "┘",
@@ -1474,10 +1582,22 @@ mod tests {
         assert_eq!(preview.focused_thread_id(), Some("second"), "k re-enters the last bubble");
         assert_eq!(preview.cursor_position(), Some((2, None)));
 
-        // The bubble under the cursor is highlighted as a whole.
+        // The bubble under the cursor shows focus through its border, not a
+        // background: no row of it is painted as selected.
         let buf = render_to_buffer(&preview, 60, 30);
         let two = (0..30).find(|&y| row_text(&buf, y).contains("two")).unwrap();
-        assert_eq!(row_bg(&buf, two), crate::theme::SELECTION_BG);
+        let border_x = row_text(&buf, two)
+            .find('│')
+            .map(|b| row_text(&buf, two)[..b].chars().count())
+            .unwrap() as u16;
+        assert_eq!(buf[(border_x, two)].fg, crate::theme::palette().marker);
+        assert_ne!(row_bg(&buf, two), crate::theme::SELECTION_BG);
+        let one = (0..30).find(|&y| row_text(&buf, y).contains("one")).unwrap();
+        assert_eq!(
+            buf[(border_x, one)].fg,
+            crate::theme::palette().gray,
+            "other bubbles stay quiet"
+        );
     }
 
     #[test]
@@ -1504,5 +1624,174 @@ mod tests {
         assert_eq!(preview.total_rows(), 6);
         assert!(preview.handle_event(&z));
         assert!(preview.inline.folded.is_empty());
+    }
+
+    #[test]
+    fn clicking_a_bubble_focuses_it_and_clicking_code_moves_the_cursor() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let click = |row: u16| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 20,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let mut preview = CodePreview::new(numbered_code(6), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 20);
+        preview.set_threads(vec![thread("a", 1, 1, &["one"]), thread("b", 1, 1, &["two"])]);
+        let buf = render_to_buffer(&preview, 60, 20);
+
+        let two = (0..20).find(|&y| row_text(&buf, y).contains("two")).unwrap();
+        assert!(preview.handle_event(&click(two)));
+        assert_eq!(preview.focused_thread_id(), Some("b"));
+        assert_eq!(preview.cursor_position(), Some((1, None)));
+
+        let line4 = (0..20).find(|&y| row_text(&buf, y).contains("line4")).unwrap();
+        assert!(preview.handle_event(&click(line4)));
+        assert_eq!(preview.cursor_position(), Some((4, None)));
+        assert_eq!(preview.focused_thread_id(), None);
+    }
+
+    #[test]
+    fn n_and_shift_n_cycle_through_threads_and_unfold_their_target() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 10);
+        preview.set_threads(vec![
+            thread("a", 2, 2, &["one"]),
+            thread("b", 9, 9, &["two"]),
+            thread("c", 15, 15, &["three"]),
+        ]);
+        preview.jump_to_line(5);
+        let n = key(ratatui::crossterm::event::KeyCode::Char('n'));
+        let shift_n = key(ratatui::crossterm::event::KeyCode::Char('N'));
+
+        assert!(preview.handle_event(&n));
+        assert_eq!(preview.focused_thread_id(), Some("b"), "next thread below the cursor");
+        assert!(preview.handle_event(&n));
+        assert_eq!(preview.focused_thread_id(), Some("c"));
+        assert!(preview.handle_event(&n));
+        assert_eq!(preview.focused_thread_id(), Some("a"), "wraps around");
+        assert!(preview.handle_event(&shift_n));
+        assert_eq!(preview.focused_thread_id(), Some("c"));
+
+        // A folded thread is opened when n lands on it, and scrolled into view.
+        preview.inline.folded.insert("a".into());
+        preview.invalidate_layout();
+        assert!(preview.handle_event(&n));
+        assert_eq!(preview.focused_thread_id(), Some("a"));
+        assert!(preview.inline.folded.is_empty());
+        let (first, _) = preview.cursor_rows().unwrap();
+        assert!(
+            first >= preview.scroll_offset as usize && first < preview.scroll_offset as usize + 10
+        );
+    }
+
+    #[test]
+    fn shift_z_folds_everything_then_unfolds_everything() {
+        let mut preview = CodePreview::new(numbered_code(8), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 30);
+        preview.set_threads(vec![thread("a", 1, 1, &["one"]), thread("b", 4, 4, &["two"])]);
+        let shift_z = key(ratatui::crossterm::event::KeyCode::Char('Z'));
+
+        assert!(preview.handle_event(&shift_z));
+        assert_eq!(preview.total_rows(), 8, "all bubbles folded");
+        assert!(preview.handle_event(&shift_z));
+        assert!(preview.inline.folded.is_empty());
+
+        // A partially folded preview folds the rest first.
+        preview.inline.folded.insert("a".into());
+        preview.invalidate_layout();
+        assert!(preview.handle_event(&shift_z));
+        assert_eq!(preview.inline.folded.len(), 2);
+    }
+
+    /// Text of the rendered preview plus a mask of what is highlighted:
+    /// `^` the focused comment's node, `=` the cursor line, `*` a focused
+    /// (marker-coloured) bubble border. Catches layout and focus regressions
+    /// that a text-only snapshot would miss.
+    fn snapshot(preview: &CodePreview, width: u16, height: u16) -> String {
+        let buf = render_to_buffer(preview, width, height);
+        let marker = crate::theme::palette().marker;
+        let mut out = String::new();
+        for y in 0..height {
+            out.push_str(row_text(&buf, y).trim_end());
+            out.push('\n');
+            let mask: String = (0..width)
+                .map(|x| {
+                    let cell = &buf[(x, y)];
+                    if cell.bg == crate::theme::COMMENT_ANCHOR_BG {
+                        '^'
+                    } else if cell.bg == crate::theme::SELECTION_BG {
+                        '='
+                    } else if cell.fg == marker && "┌┐└┘│─".contains(cell.symbol()) {
+                        '*'
+                    } else {
+                        ' '
+                    }
+                })
+                .collect();
+            if !mask.trim().is_empty() {
+                out.push_str(&format!("{}\n", mask.trim_end()));
+            }
+        }
+        out
+    }
+
+    fn snapshot_preview() -> CodePreview {
+        let code = "fn parse(input: &str) -> usize {\n    let tokens = lex(input);\n    match tokens {\n        0 => helper(1),\n        _ => helper(2),\n    }\n}\n";
+        let mut preview = CodePreview::new(code.to_string(), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 64, 24);
+        let mut lex = thread("lex", 1, 1, &["lex runs on every call", "agreed, cache it"]);
+        (lex.start_col, lex.end_col) = (4, 28);
+        let mut arm = thread(
+            "arm",
+            4,
+            4,
+            &["the fallback arm hides unknown tokens; log them before defaulting"],
+        );
+        (arm.start_col, arm.end_col) = (8, 22);
+        let mut second = thread("second", 4, 4, &["second thread on the same arm"]);
+        (second.start_col, second.end_col) = (8, 22);
+        preview.set_threads(vec![lex, arm, second]);
+        preview
+    }
+
+    #[test]
+    fn snapshot_threads_expanded() {
+        let preview = snapshot_preview();
+        insta::assert_snapshot!(snapshot(&preview, 64, 24));
+    }
+
+    #[test]
+    fn snapshot_cursor_on_a_node_line() {
+        let mut preview = snapshot_preview();
+        preview.jump_to_line(1);
+        insta::assert_snapshot!(snapshot(&preview, 64, 24));
+    }
+
+    #[test]
+    fn snapshot_second_bubble_focused() {
+        let mut preview = snapshot_preview();
+        preview.jump_to_line(4);
+        for _ in 0..2 {
+            preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('j')));
+        }
+        insta::assert_snapshot!(snapshot(&preview, 64, 24));
+    }
+
+    #[test]
+    fn snapshot_line_folded_and_all_folded() {
+        let mut preview = snapshot_preview();
+        preview.jump_to_line(4);
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('z')));
+        let line_folded = snapshot(&preview, 64, 24);
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('Z')));
+        let all_folded = snapshot(&preview, 64, 24);
+        insta::assert_snapshot!(format!("{line_folded}--- Z ---\n{all_folded}"));
     }
 }
