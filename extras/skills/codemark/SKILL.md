@@ -660,6 +660,24 @@ codemark edit <bookmark-id> --note "First observation" --note "Second observatio
 codemark edit <bookmark-id> --comment "Debugging **ENG-42**: this lock is held too long; see [trace](https://example.com/t/9)."
 ```
 
+### Anchored comments (point at one line or node inside a bookmark)
+When you find a specific issue *inside* a bookmarked function, add an anchored comment instead of a new bookmark. Pass the range in the bookmark's file; codemark generates the anchor, which follows the code through refactors.
+```bash
+# Comment on line 57 of the bookmark's file (same --range syntax as `codemark add`)
+codemark comment add <bookmark-id> --range 57 --body "This retry never backs off." --created-by claude
+
+# Without --range the comment is about the whole bookmark
+codemark comment add <bookmark-id> --body "Part of **ENG-42**." --created-by claude
+
+# Reply, list (JSON: anchor = anchored | orphaned | suspended | bookmark), re-anchor, remove
+codemark comment reply <comment-id> --body "Fixed in #212." --created-by claude
+codemark comment list <bookmark-id> --format markdown
+codemark comment reanchor <comment-id> --range 60     # or --detach
+codemark comment rm <comment-id>
+```
+- **Scope rule:** the range must lie inside the bookmark's enclosing function, method or class (its *deepest landmark*). Outside it, the command fails and names the landmark's lines; bookmark that code instead and put both bookmarks in one collection.
+- **orphaned** means the bookmark resolves but the commented code is gone: re-anchor or detach it. **suspended** means the bookmark itself is broken; heal the bookmark first.
+
 ### Health and maintenance
 ```bash
 # Check bookmark health

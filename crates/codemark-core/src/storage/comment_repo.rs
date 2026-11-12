@@ -102,6 +102,63 @@ impl Database {
         }
     }
 
+    /// Get a comment by its full id or an unambiguous id prefix. The prefix
+    /// is matched literally (`_` and `%` are not wildcards); an empty one is
+    /// rejected rather than matching every comment.
+    pub fn get_comment_by_prefix(&self, prefix: &str) -> Result<Option<BookmarkComment>> {
+        if prefix.is_empty() {
+            return Err(crate::error::Error::Input("comment id must not be empty".into()));
+        }
+        if let Some(comment) = self.get_comment(prefix)? {
+            return Ok(Some(comment));
+        }
+        let ids: Vec<String> = self
+            .conn()
+            .prepare(
+                "SELECT id FROM bookmark_comments WHERE substr(id, 1, length(?1)) = ?1 LIMIT 2",
+            )?
+            .query_map([prefix], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        match ids.as_slice() {
+            [id] => self.get_comment(id),
+            [] => Ok(None),
+            _ => Err(crate::error::Error::Input(format!(
+                "comment id prefix '{prefix}' is ambiguous; use more characters"
+            ))),
+        }
+    }
+
+    /// Replace a comment's anchor, or detach it with `None` to make it a
+    /// whole-bookmark comment. Detaching keeps `anchor_hint`, so the comment
+    /// can still say where it used to point.
+    pub fn update_comment_anchor(
+        &self,
+        id: &str,
+        anchor: Option<&crate::engine::comment_anchor::CommentAnchor>,
+    ) -> Result<()> {
+        self.conn().execute(
+            "UPDATE bookmark_comments
+             SET query = ?2, content_hash = ?3, anchor_hint = COALESCE(?4, anchor_hint)
+             WHERE id = ?1",
+            rusqlite::params![
+                id,
+                anchor.map(|a| a.query.as_str()),
+                anchor.map(|a| a.content_hash.as_str()),
+                anchor.map(|a| a.anchor_hint.as_str()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a comment and its replies, returning how many rows went.
+    pub fn delete_comment_thread(&self, id: &str) -> Result<usize> {
+        let tx = self.conn().unchecked_transaction()?;
+        let replies = tx.execute("DELETE FROM bookmark_comments WHERE parent_id = ?1", [id])?;
+        let root = tx.execute("DELETE FROM bookmark_comments WHERE id = ?1", [id])?;
+        tx.commit()?;
+        Ok(replies + root)
+    }
+
     /// Delete a comment by its ID.
     pub fn delete_comment(&self, id: &str) -> Result<()> {
         self.conn().execute("DELETE FROM bookmark_comments WHERE id = ?1", [id])?;
@@ -238,5 +295,33 @@ mod tests {
         let cycle =
             vec![test_comment("a", "bm-1", Some("b")), test_comment("b", "bm-1", Some("a"))];
         assert!(BookmarkComment::parents_first(cycle).is_err());
+    }
+
+    #[test]
+    fn prefix_lookup_and_anchor_update() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-1")).unwrap();
+        db.insert_comment(&test_comment("abc-1", "bm-1", None)).unwrap();
+        db.insert_comment(&test_comment("abd-2", "bm-1", None)).unwrap();
+
+        assert_eq!(db.get_comment_by_prefix("abc").unwrap().unwrap().id, "abc-1");
+        assert!(db.get_comment_by_prefix("ab").is_err(), "ambiguous prefix");
+        assert!(db.get_comment_by_prefix("zz").unwrap().is_none());
+        // Prefixes are literal: `_` and `%` are not LIKE wildcards here.
+        assert!(db.get_comment_by_prefix("ab_").unwrap().is_none());
+        assert!(db.get_comment_by_prefix("%").unwrap().is_none());
+        assert!(db.get_comment_by_prefix("").is_err());
+
+        let anchor = crate::engine::comment_anchor::CommentAnchor {
+            query: "(call_expression) @target".into(),
+            content_hash: "h".into(),
+            anchor_hint: "L1-L1: f()".into(),
+        };
+        db.update_comment_anchor("abc-1", Some(&anchor)).unwrap();
+        assert!(db.get_comment("abc-1").unwrap().unwrap().is_anchored());
+        db.update_comment_anchor("abc-1", None).unwrap();
+        let detached = db.get_comment("abc-1").unwrap().unwrap();
+        assert!(!detached.is_anchored());
+        assert_eq!(detached.anchor_hint.as_deref(), Some("L1-L1: f()"), "hint survives detach");
     }
 }
