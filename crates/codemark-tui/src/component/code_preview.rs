@@ -19,7 +19,7 @@ use syntect::util::LinesWithEndings;
 
 use super::Component;
 use super::inline_comments::{
-    BUBBLE_INDENT, BubbleStyle, DisplayRow, InlineThread, RowLayout, build_layout,
+    BUBBLE_CHROME, BubbleStyle, DisplayRow, InlineThread, RowLayout, build_layout,
     render_bubble_line,
 };
 use crate::event::Event;
@@ -147,6 +147,10 @@ struct InlineState {
     layout_key: Cell<Option<(u64, usize)>>,
     /// Bumped whenever code, threads or folds change.
     layout_gen: Cell<u64>,
+    /// Root id of the thread whose bubble the cursor is on. `None` while the
+    /// cursor is on a code line (`selected_line`); the bubble always sits
+    /// under `selected_line`.
+    cursor_on: Option<String>,
 }
 
 impl CodePreview {
@@ -225,6 +229,7 @@ impl CodePreview {
     /// entry points).
     fn reset_view(&mut self) {
         self.inline.threads.clear();
+        self.inline.cursor_on = None;
         self.invalidate_layout();
         self.scroll_offset = 0;
         self.selected_line = None;
@@ -299,6 +304,11 @@ impl CodePreview {
             let line_num = format!("{:>num_width$} ", i + 1);
             spans.push(Span::styled(line_num, Style::default().fg(crate::theme::palette().dim)));
 
+            // Comment sign column (`▾` / `▸` where a comment thread sits under
+            // the line), filled in at render time, then a separator space.
+            spans.push(Span::raw(" "));
+            spans.push(Span::raw(" "));
+
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
                 let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
@@ -321,6 +331,7 @@ impl CodePreview {
     /// Jump to and select a line range (0-indexed).
     /// If end is None, only the start line is highlighted.
     pub fn jump_to_range(&mut self, start: usize, end: Option<usize>) {
+        self.inline.cursor_on = None;
         let line_count = self.code.lines().count();
         if line_count > 0 {
             let start = start.min(line_count - 1);
@@ -357,6 +368,7 @@ impl CodePreview {
     /// at a stale, misleading location.
     pub fn clear_selection(&mut self) {
         self.selected_line = None;
+        self.inline.cursor_on = None;
         self.selected_range = None;
         self.selection_mode = false;
         self.cursor_col = 0;
@@ -401,13 +413,14 @@ impl CodePreview {
         old_offset != self.scroll_offset
     }
 
-    /// Width of the gutter (sign column + line number + trailing space) that
-    /// precedes code content, used to map a code column to a buffer x position.
+    /// Width of the gutter (range sign + line number + space + comment sign +
+    /// space) that precedes code content, used to map a code column to a
+    /// buffer x position.
     ///
     /// Derived from the same [`line_number_width`] that `refresh_cache` pads with,
     /// so the cursor's x offset matches the rendered gutter for every line.
     fn gutter_width(&self) -> u16 {
-        (1 + line_number_width(self.line_count()) + 1) as u16
+        (1 + line_number_width(self.line_count()) + 1 + 2) as u16
     }
 
     /// Number of characters in the code content of `line_idx` (excluding the
@@ -467,6 +480,7 @@ impl CodePreview {
         }
         self.inline.folded.retain(|id| threads.iter().any(|t| &t.root_id == id));
         self.relayout_keeping_cursor(|preview| preview.inline.threads = threads);
+        self.drop_hidden_cursor_bubble();
     }
 
     /// The inline threads, in display order.
@@ -474,10 +488,23 @@ impl CodePreview {
         &self.inline.threads
     }
 
-    /// The thread the cursor is on: the narrowest one whose anchored lines
-    /// contain the cursor line. Only while the preview has focus.
+    /// Index of the thread whose bubble the cursor is on.
+    fn cursor_thread(&self) -> Option<usize> {
+        let id = self.inline.cursor_on.as_deref()?;
+        self.inline.threads.iter().position(|t| t.root_id == id)
+    }
+
+    /// The thread the cursor is on: the bubble under the cursor, else the
+    /// narrowest thread whose anchored lines contain the cursor line. Only
+    /// while the preview has focus.
     fn focused_thread(&self) -> Option<usize> {
-        let line = self.selected_line.filter(|_| self.focused)?;
+        if !self.focused {
+            return None;
+        }
+        if let Some(t) = self.cursor_thread() {
+            return Some(t);
+        }
+        let line = self.selected_line?;
         self.inline
             .threads
             .iter()
@@ -492,17 +519,143 @@ impl CodePreview {
         self.focused_thread().map(|i| self.inline.threads[i].root_id.as_str())
     }
 
-    /// Fold or unfold the thread under the cursor. Returns `false` when the
-    /// cursor is on no thread, so the key can fall through.
+    /// The line a thread's bubble sits under (its anchor end, clamped).
+    fn thread_line(&self, thread: &InlineThread) -> usize {
+        thread.anchor_end.min(self.line_count().saturating_sub(1))
+    }
+
+    /// Indices of threads whose bubbles sit under `line`, in display order.
+    fn threads_under(&self, line: usize) -> Vec<usize> {
+        (0..self.inline.threads.len())
+            .filter(|&i| self.thread_line(&self.inline.threads[i]) == line)
+            .collect()
+    }
+
+    /// [`Self::threads_under`], expanded ones only: the bubbles the cursor
+    /// can stop on.
+    fn bubbles_under(&self, line: usize) -> Vec<usize> {
+        self.threads_under(line)
+            .into_iter()
+            .filter(|&i| !self.inline.folded.contains(&self.inline.threads[i].root_id))
+            .collect()
+    }
+
+    /// `z`: on a bubble, fold that thread (the cursor returns to its line);
+    /// on a code line with threads under it, fold them all, or unfold them
+    /// all when every one is folded. Returns `false` when there is nothing to
+    /// fold, so the key can fall through.
     fn toggle_fold(&mut self) -> bool {
-        let Some(i) = self.focused_thread() else { return false };
-        let id = self.inline.threads[i].root_id.clone();
-        self.relayout_keeping_cursor(|preview| {
-            if !preview.inline.folded.remove(&id) {
+        if let Some(t) = self.cursor_thread() {
+            let id = self.inline.threads[t].root_id.clone();
+            self.relayout_keeping_cursor(|preview| {
                 preview.inline.folded.insert(id);
+                preview.inline.cursor_on = None;
+            });
+            return true;
+        }
+        let Some(line) = self.selected_line else { return false };
+        let ids: Vec<String> = self
+            .threads_under(line)
+            .into_iter()
+            .map(|i| self.inline.threads[i].root_id.clone())
+            .collect();
+        if ids.is_empty() {
+            return false;
+        }
+        let all_folded = ids.iter().all(|id| self.inline.folded.contains(id));
+        self.relayout_keeping_cursor(|preview| {
+            for id in ids {
+                if all_folded {
+                    preview.inline.folded.remove(&id);
+                } else {
+                    preview.inline.folded.insert(id);
+                }
             }
         });
         true
+    }
+
+    /// Clear `cursor_on` when its thread was removed or folded away.
+    fn drop_hidden_cursor_bubble(&mut self) {
+        if let Some(id) = self.inline.cursor_on.clone()
+            && (self.cursor_thread().is_none() || self.inline.folded.contains(&id))
+        {
+            self.inline.cursor_on = None;
+        }
+    }
+
+    /// Move the cursor one stop down: through each expanded bubble under the
+    /// current line, then to the next line.
+    fn cursor_down(&mut self) {
+        let line_count = self.line_count();
+        if line_count == 0 {
+            return;
+        }
+        let Some(line) = self.selected_line else {
+            self.selected_line = Some(0);
+            return;
+        };
+        let bubbles = self.bubbles_under(line);
+        let next_bubble = match self.cursor_thread() {
+            Some(t) => bubbles.iter().position(|&b| b == t).and_then(|p| bubbles.get(p + 1)),
+            None => bubbles.first(),
+        };
+        if let Some(&b) = next_bubble {
+            self.inline.cursor_on = Some(self.inline.threads[b].root_id.clone());
+        } else if line + 1 < line_count {
+            self.inline.cursor_on = None;
+            self.selected_line = Some(line + 1);
+        }
+    }
+
+    /// Move the cursor one stop up: through the bubbles under the current
+    /// line back to the line, then into the previous line's last bubble.
+    fn cursor_up(&mut self) {
+        let Some(line) = self.selected_line else {
+            self.selected_line = Some(0);
+            return;
+        };
+        if let Some(t) = self.cursor_thread() {
+            let bubbles = self.bubbles_under(line);
+            let previous = bubbles.iter().position(|&b| b == t).filter(|&p| p > 0);
+            self.inline.cursor_on =
+                previous.map(|p| self.inline.threads[bubbles[p - 1]].root_id.clone());
+            return;
+        }
+        if line == 0 {
+            return;
+        }
+        self.selected_line = Some(line - 1);
+        self.inline.cursor_on =
+            self.bubbles_under(line - 1).last().map(|&b| self.inline.threads[b].root_id.clone());
+    }
+
+    /// Display rows the cursor covers: its bubble, or its code line.
+    fn cursor_rows(&self) -> Option<(usize, usize)> {
+        if let Some(t) = self.cursor_thread()
+            && let Some(rows) = self.layout().bubble_rows(t)
+        {
+            return Some(rows);
+        }
+        self.selected_line.map(|line| {
+            let row = self.row_of(line);
+            (row, row)
+        })
+    }
+
+    /// Scroll just enough to show the cursor; a whole bubble when it fits.
+    fn scroll_to_cursor(&mut self) {
+        let Some((first, last)) = self.cursor_rows() else { return };
+        let height = self.last_area.get().height as usize;
+        if height == 0 {
+            return;
+        }
+        let offset = self.scroll_offset as usize;
+        if last >= offset + height {
+            self.scroll_offset = (last + 1).saturating_sub(height).min(first) as u16;
+        } else if first < offset {
+            self.scroll_offset = first as u16;
+        }
     }
 
     /// Apply `change` (which alters threads or folds), then shift the scroll
@@ -513,6 +666,7 @@ impl CodePreview {
         let screen_row = self.row_of(anchor) as i64 - self.scroll_offset as i64;
         change(self);
         self.invalidate_layout();
+        self.drop_hidden_cursor_bubble();
         let height = self.last_area.get().height as usize;
         if height == 0 {
             // No frame yet, so no screen position to keep.
@@ -534,7 +688,7 @@ impl CodePreview {
         if width == 0 {
             return 0;
         }
-        width.saturating_sub(self.gutter_width() as usize + 1 + BUBBLE_INDENT + 1).max(8)
+        width.saturating_sub(self.gutter_width() as usize + 1 + BUBBLE_CHROME).max(8)
     }
 
     /// The display-row layout, rebuilt if code, threads, folds or width changed.
@@ -598,12 +752,15 @@ impl Component for CodePreview {
         let gutter = self.gutter_width() as usize;
         let row_width = code_area.width as usize;
 
-        // Lines whose folded threads get a `▸ n` marker at the end.
-        let mut fold_markers: HashMap<usize, usize> = HashMap::new();
-        for t in self.inline.threads.iter().filter(|t| self.inline.folded.contains(&t.root_id)) {
-            *fold_markers.entry(t.anchor_end.min(cached.len().saturating_sub(1))).or_default() +=
-                t.entries.len();
+        // Comment sign per line with threads under it: `▾` while any is
+        // expanded, `▸` when all are folded.
+        let mut comment_signs: HashMap<usize, bool> = HashMap::new();
+        for t in &self.inline.threads {
+            let line = self.thread_line(t);
+            let expanded = !self.inline.folded.contains(&t.root_id);
+            *comment_signs.entry(line).or_default() |= expanded;
         }
+        let cursor_thread = self.cursor_thread().filter(|_| self.focused);
 
         // Build only the visible rows: the paragraph is rendered pre-scrolled.
         // Clamp to the content: an offset set before the first frame (no
@@ -621,20 +778,21 @@ impl Component for CodePreview {
                     let (sign, sign_color) =
                         if in_range { ("┃", palette.marker) } else { (" ", palette.dim) };
                     let mut new_spans = vec![Span::styled(sign, Style::default().fg(sign_color))];
-                    // The cached line is sign + line number + content; swap the sign.
-                    new_spans.extend(line.spans.iter().skip(1).cloned());
-                    if let Some(count) = fold_markers.get(&i) {
-                        new_spans.push(Span::styled(
-                            format!("  ▸ {count}"),
-                            Style::default().fg(palette.accent),
-                        ));
-                    }
+                    // The cached line is range sign, line number, comment sign,
+                    // separator, then content: swap in both signs.
+                    new_spans.extend(line.spans.get(1).cloned());
+                    new_spans.push(match comment_signs.get(&i) {
+                        Some(true) => Span::styled("▾", Style::default().fg(palette.accent)),
+                        Some(false) => Span::styled("▸", Style::default().fg(palette.accent)),
+                        None => Span::raw(" "),
+                    });
+                    new_spans.extend(line.spans.iter().skip(3).cloned());
                     text_lines.push(Line::from(new_spans));
                 }
                 DisplayRow::Bubble { thread, row } => {
                     let focused = focused_thread == Some(thread);
                     let style = BubbleStyle {
-                        border: if focused { palette.marker } else { palette.dim },
+                        border: if focused { palette.marker } else { palette.gray },
                         text: palette.emphasis,
                         dim: palette.dim,
                         accent: palette.accent,
@@ -642,7 +800,8 @@ impl Component for CodePreview {
                     text_lines.push(render_bubble_line(
                         &layout.bubbles[thread][row],
                         gutter,
-                        row_width,
+                        // Leave the last column to the scrollbar.
+                        row_width.saturating_sub(1),
                         focused,
                         &style,
                     ));
@@ -652,7 +811,10 @@ impl Component for CodePreview {
 
         let focused_anchor = focused_thread
             .map(|t| (self.inline.threads[t].anchor_start, self.inline.threads[t].anchor_end));
-        let selected_row = self.selected_line.map(|line| layout.row_of(line));
+        // The cursor is on a code line, or on a whole bubble.
+        let cursor_bubble = cursor_thread.and_then(|t| layout.bubble_rows(t));
+        let selected_row =
+            self.selected_line.filter(|_| cursor_bubble.is_none()).map(|line| layout.row_of(line));
         // Code rows (not bubble rows) of the focused comment's anchored lines.
         let anchor_rows: Vec<usize> = focused_anchor
             .map(|(start, end)| (start..=end).map(|line| layout.row_of(line)).collect())
@@ -685,6 +847,11 @@ impl Component for CodePreview {
         // thumb keeps its own styling on the highlighted row.
         if let Some(row) = selected_row {
             paint_row(buf, row, crate::theme::SELECTION_BG);
+        }
+        if let Some((first, last)) = cursor_bubble {
+            for row in first..=last {
+                paint_row(buf, row, crate::theme::SELECTION_BG);
+            }
         }
 
         // Draw the block cursor on the focused row/column. Painted on top of the
@@ -745,35 +912,16 @@ impl Component for CodePreview {
                 match key.code {
                     ratatui::crossterm::event::KeyCode::Down
                     | ratatui::crossterm::event::KeyCode::Char('j') => {
-                        let line_count = self.line_count();
-                        if line_count > 0 {
-                            let next =
-                                self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
-                            self.selected_line = Some(next);
-
-                            // Auto-scroll if selection goes off screen. Rows,
-                            // not lines: comment bubbles sit between lines.
-                            let height = self.last_area.get().height as usize;
-                            let row = self.row_of(next);
-                            if row >= self.scroll_offset as usize + height {
-                                self.scroll_offset = (row + 1).saturating_sub(height) as u16;
-                            } else if row < self.scroll_offset as usize {
-                                self.scroll_offset = row as u16;
-                            }
-                            self.clamp_cursor_col();
-                        }
+                        // Comment bubbles are cursor stops between lines.
+                        self.cursor_down();
+                        self.scroll_to_cursor();
+                        self.clamp_cursor_col();
                         true
                     }
                     ratatui::crossterm::event::KeyCode::Up
                     | ratatui::crossterm::event::KeyCode::Char('k') => {
-                        let next = self.selected_line.map_or(0, |i| i.saturating_sub(1));
-                        self.selected_line = Some(next);
-
-                        // Auto-scroll if selection goes off screen
-                        let row = self.row_of(next);
-                        if row < self.scroll_offset as usize {
-                            self.scroll_offset = row as u16;
-                        }
+                        self.cursor_up();
+                        self.scroll_to_cursor();
                         self.clamp_cursor_col();
                         true
                     }
@@ -793,7 +941,10 @@ impl Component for CodePreview {
                     }
                     ratatui::crossterm::event::KeyCode::Left
                     | ratatui::crossterm::event::KeyCode::Char('h') => {
-                        if self.selection_mode && self.selected_line.is_some() {
+                        if self.selection_mode
+                            && self.selected_line.is_some()
+                            && self.inline.cursor_on.is_none()
+                        {
                             self.cursor_col = self.cursor_col.saturating_sub(1);
                             true
                         } else {
@@ -803,6 +954,7 @@ impl Component for CodePreview {
                     ratatui::crossterm::event::KeyCode::Right
                     | ratatui::crossterm::event::KeyCode::Char('l') => {
                         if self.selection_mode
+                            && self.inline.cursor_on.is_none()
                             && let Some(line) = self.selected_line
                         {
                             self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
@@ -1005,16 +1157,17 @@ mod tests {
 
     #[test]
     fn gutter_width_grows_past_999_lines_and_cursor_tracks_it() {
-        // Up to 999 lines the line-number field is 3 digits: gutter = 1 + 3 + 1.
+        // Up to 999 lines the line-number field is 3 digits:
+        // gutter = range sign + 3 + space + comment sign + space.
         let small: String = (1..=10).map(|n| format!("line {n}\n")).collect();
         let preview = CodePreview::new(small, "txt");
-        assert_eq!(preview.gutter_width(), 5);
+        assert_eq!(preview.gutter_width(), 7);
 
         // At 1000+ lines the field widens to 4 digits, so the gutter (and the
-        // cursor's x offset) must grow with it rather than stay pinned at 5.
+        // cursor's x offset) must grow with it rather than stay pinned at 7.
         let big: String = (1..=1000).map(|n| format!("line {n}\n")).collect();
         let mut preview = CodePreview::new(big, "txt");
-        assert_eq!(preview.gutter_width(), 6);
+        assert_eq!(preview.gutter_width(), 8);
 
         preview.set_focus(true);
         render_to_buffer(&preview, 40, 6);
@@ -1220,7 +1373,7 @@ mod tests {
         assert_eq!(preview.total_rows(), 30, "folded bubbles take no rows (was {rows_before})");
         assert_eq!(preview.row_of(4) - preview.scroll_offset as usize, screen_row);
         let line4 = (0..10).map(|y| row_text(&buf, y)).find(|r| r.contains("line4")).unwrap();
-        assert!(line4.contains("▸ 2"), "folded marker counts the comments: {line4}");
+        assert!(line4.contains("5 ▸ line4"), "folded sign sits beside the number: {line4}");
 
         // Off the thread, `z` falls through.
         preview.jump_to_line(10);
@@ -1265,5 +1418,91 @@ mod tests {
         preview.set_code(numbered_code(4));
         assert!(preview.threads().is_empty());
         assert_eq!(preview.total_rows(), 4);
+    }
+
+    #[test]
+    fn expanded_threads_show_a_sign_beside_the_line_number() {
+        let mut preview = CodePreview::new(numbered_code(4), "txt");
+        render_to_buffer(&preview, 60, 12);
+        preview.set_threads(vec![thread("t1", 1, 1, &["x"])]);
+        let buf = render_to_buffer(&preview, 60, 12);
+        assert!(row_text(&buf, 1).contains("2 ▾ line1"), "{}", row_text(&buf, 1));
+        assert!(row_text(&buf, 0).contains("1   line0"), "no sign without a thread");
+    }
+
+    #[test]
+    fn bubbles_are_closed_boxes_clear_of_the_scrollbar() {
+        let mut preview = CodePreview::new(numbered_code(40), "txt");
+        render_to_buffer(&preview, 50, 10);
+        preview.set_threads(vec![thread("t1", 0, 0, &["body", "reply"])]);
+        let buf = render_to_buffer(&preview, 50, 10);
+        // Rows 1..=4: top, body, reply, bottom. The scrollbar owns column 49.
+        assert_eq!(cell_symbol(&buf, 48, 1), "┐", "{}", row_text(&buf, 1));
+        for y in 2..=3 {
+            let row = row_text(&buf, y);
+            assert_eq!(row.matches('│').count(), 2, "left and right border: {row}");
+        }
+        assert!(row_text(&buf, 4).contains('┘'));
+        for y in 1..=4 {
+            let edge = cell_symbol(&buf, 48, y);
+            assert!(
+                edge == "┐" || edge == "│" || edge == "┘",
+                "box ends left of the scrollbar: {edge:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_stops_on_every_bubble_under_a_line() {
+        let mut preview = CodePreview::new(numbered_code(6), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 30);
+        preview
+            .set_threads(vec![thread("first", 2, 2, &["one"]), thread("second", 2, 2, &["two"])]);
+        preview.jump_to_line(2);
+        assert_eq!(preview.focused_thread_id(), Some("first"), "the line focuses its first thread");
+
+        let down = key(ratatui::crossterm::event::KeyCode::Char('j'));
+        let up = key(ratatui::crossterm::event::KeyCode::Char('k'));
+        preview.handle_event(&down);
+        assert_eq!(preview.focused_thread_id(), Some("first"));
+        preview.handle_event(&down);
+        assert_eq!(preview.focused_thread_id(), Some("second"), "the second bubble is reachable");
+        preview.handle_event(&down);
+        assert_eq!(preview.cursor_position(), Some((3, None)));
+        preview.handle_event(&up);
+        assert_eq!(preview.focused_thread_id(), Some("second"), "k re-enters the last bubble");
+        assert_eq!(preview.cursor_position(), Some((2, None)));
+
+        // The bubble under the cursor is highlighted as a whole.
+        let buf = render_to_buffer(&preview, 60, 30);
+        let two = (0..30).find(|&y| row_text(&buf, y).contains("two")).unwrap();
+        assert_eq!(row_bg(&buf, two), crate::theme::SELECTION_BG);
+    }
+
+    #[test]
+    fn z_folds_the_bubble_under_the_cursor_or_every_thread_on_the_line() {
+        let mut preview = CodePreview::new(numbered_code(6), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 30);
+        preview.set_threads(vec![thread("a", 2, 2, &["one"]), thread("b", 2, 2, &["two"])]);
+        preview.jump_to_line(2);
+        let z = key(ratatui::crossterm::event::KeyCode::Char('z'));
+        let down = key(ratatui::crossterm::event::KeyCode::Char('j'));
+
+        // On the second bubble, `z` folds just that one and returns to the line.
+        preview.handle_event(&down);
+        preview.handle_event(&down);
+        assert!(preview.handle_event(&z));
+        assert_eq!(preview.inline.folded.iter().collect::<Vec<_>>(), vec!["b"]);
+        assert_eq!(preview.cursor_position(), Some((2, None)));
+        assert_eq!(preview.focused_thread_id(), Some("a"));
+
+        // On the line, `z` folds everything under it, then unfolds it all.
+        assert!(preview.handle_event(&z));
+        assert_eq!(preview.inline.folded.len(), 2);
+        assert_eq!(preview.total_rows(), 6);
+        assert!(preview.handle_event(&z));
+        assert!(preview.inline.folded.is_empty());
     }
 }

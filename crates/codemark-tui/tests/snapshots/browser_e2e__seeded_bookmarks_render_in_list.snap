@@ -4,9 +4,9 @@ expression: "render_to_string(&layout, 100, 30)"
 ---
 ╭──────────────────────────────────────╮╭──Content  Info  Query ─────────────────── Unmatched ─[4]─╮
 │ Search...              [ FTS | Sem ] ││ src/main.rs                                              │
-╰──────────────────────────────────────╯│   1 fn main() {                                          │
-╭──Repos  Owners  Auth ────────────[1]─╮│   2     println!("hi");                                  │
-│                                      ││   3 }                                                    │
+╰──────────────────────────────────────╯│   1   fn main() {                                        │
+╭──Repos  Owners  Auth ────────────[1]─╮│   2       println!("hi");                                │
+│                                      ││   3   }                                                  │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

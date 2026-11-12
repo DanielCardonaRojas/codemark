@@ -68,6 +68,8 @@ pub(crate) struct RowLayout {
     pub line_row: Vec<usize>,
     /// Bubble rows per thread (empty while folded).
     pub bubbles: Vec<Vec<BubbleLine>>,
+    /// Display row of each thread's first bubble row; `None` while folded.
+    pub bubble_start: Vec<Option<usize>>,
 }
 
 impl RowLayout {
@@ -82,10 +84,17 @@ impl RowLayout {
     pub fn total_rows(&self) -> usize {
         self.rows.len()
     }
+
+    /// First and last display row of thread `thread`'s bubble, if expanded.
+    pub fn bubble_rows(&self, thread: usize) -> Option<(usize, usize)> {
+        let start = (*self.bubble_start.get(thread)?)?;
+        Some((start, start + self.bubbles[thread].len().saturating_sub(1)))
+    }
 }
 
-/// Columns a bubble takes before its text: left padding + border + space.
-pub(crate) const BUBBLE_INDENT: usize = 3;
+/// Columns a bubble row spends on chrome around its text: a space after the
+/// gutter, `│ ` on the left and ` │` on the right.
+pub(crate) const BUBBLE_CHROME: usize = 5;
 
 /// Build the display rows for `line_count` source lines.
 ///
@@ -112,14 +121,18 @@ pub(crate) fn build_layout(
 
     let mut rows = Vec::with_capacity(line_count);
     let mut line_row = Vec::with_capacity(line_count);
+    let mut bubble_start = vec![None; threads.len()];
     for (line, threads_here) in below.iter().enumerate() {
         line_row.push(rows.len());
         rows.push(DisplayRow::Code(line));
         for &thread in threads_here {
+            if !bubbles[thread].is_empty() {
+                bubble_start[thread] = Some(rows.len());
+            }
             rows.extend((0..bubbles[thread].len()).map(|row| DisplayRow::Bubble { thread, row }));
         }
     }
-    RowLayout { rows, line_row, bubbles }
+    RowLayout { rows, line_row, bubbles, bubble_start }
 }
 
 fn bubble_lines(thread: &InlineThread, width: usize) -> Vec<BubbleLine> {
@@ -199,8 +212,9 @@ pub(crate) struct BubbleStyle {
     pub accent: Color,
 }
 
-/// Render one bubble row. `indent` is the gutter width so bubbles line up
-/// with the code; `width` the whole row; `focused` adds key hints.
+/// Render one bubble row as part of a closed box that starts one column
+/// after the gutter (`indent`) and ends at `width`, the room left of the
+/// scrollbar. `focused` adds key hints to the bottom border.
 pub(crate) fn render_bubble_line(
     line: &BubbleLine,
     indent: usize,
@@ -209,42 +223,62 @@ pub(crate) fn render_bubble_line(
     style: &BubbleStyle,
 ) -> Line<'static> {
     let border = Style::default().fg(style.border);
+    let text_style = Style::default().fg(style.text);
+    // Box width from its left corner to its right corner.
+    let box_width = width.saturating_sub(indent + 1).max(6);
+    let inner = box_width - 4;
     let mut spans = vec![Span::raw(" ".repeat(indent + 1))];
-    let rule_room = width.saturating_sub(indent + BUBBLE_INDENT);
+    let pad = |used: usize| Span::raw(" ".repeat(inner.saturating_sub(used)));
     match line {
         BubbleLine::Top { author, when } => {
-            let head = format!(" {author} · {when} ");
+            let label = format!(" {author} · {when} ");
             spans.push(Span::styled("┌", border));
             spans.push(Span::styled(
                 format!(" {author}"),
                 Style::default().fg(style.accent).add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(format!(" · {when} "), Style::default().fg(style.dim)));
-            spans.push(Span::styled("─".repeat(rule_room.saturating_sub(head.width())), border));
+            spans.push(Span::styled(
+                "─".repeat((box_width - 2).saturating_sub(label.width())),
+                border,
+            ));
+            spans.push(Span::styled("┐", border));
         }
         BubbleLine::Body(text) => {
             spans.push(Span::styled("│ ", border));
-            spans.push(Span::styled(text.clone(), Style::default().fg(style.text)));
+            spans.push(Span::styled(text.clone(), text_style));
+            spans.push(pad(text.width()));
+            spans.push(Span::styled(" │", border));
         }
         BubbleLine::Reply { author, text } => {
             spans.push(Span::styled("│ ", border));
-            match author {
+            let prefix_width = match author {
                 Some(author) => {
                     spans.push(Span::styled("↳ ", Style::default().fg(style.dim)));
                     spans.push(Span::styled(
                         format!("{author}: "),
                         Style::default().fg(style.accent),
                     ));
+                    format!("↳ {author}: ").width()
                 }
-                None => spans.push(Span::raw(" ".repeat(2))),
-            }
-            spans.push(Span::styled(text.clone(), Style::default().fg(style.text)));
+                None => {
+                    spans.push(Span::raw("  "));
+                    2
+                }
+            };
+            spans.push(Span::styled(text.clone(), text_style));
+            spans.push(pad(prefix_width + text.width()));
+            spans.push(Span::styled(" │", border));
         }
         BubbleLine::Bottom => {
             let hint = if focused { " r reply · z fold " } else { "" };
             spans.push(Span::styled("└", border));
-            spans.push(Span::styled("─".repeat(rule_room.saturating_sub(hint.width())), border));
+            spans.push(Span::styled(
+                "─".repeat((box_width - 2).saturating_sub(hint.width())),
+                border,
+            ));
             spans.push(Span::styled(hint, Style::default().fg(style.dim)));
+            spans.push(Span::styled("┘", border));
         }
     }
     Line::from(spans)
