@@ -239,6 +239,8 @@ pub(crate) fn render_bubble_line(
     let pad = |used: usize| Span::raw(" ".repeat(inner.saturating_sub(used)));
     match line {
         BubbleLine::Top { author, when } => {
+            // Keep at least one rule character before the corner.
+            let author = fit_author(author, when, (box_width - 3).saturating_sub(5));
             let label = format!(" {author} · {when} ");
             spans.push(Span::styled("┌", border));
             spans.push(Span::styled(
@@ -259,6 +261,7 @@ pub(crate) fn render_bubble_line(
             spans.push(Span::styled(" │", border));
         }
         BubbleLine::ReplyHead { author, when } => {
+            let author = &fit_author(author, when, inner.saturating_sub(2 + 3));
             spans.push(Span::styled("│ ", border));
             spans.push(Span::styled("↳ ", Style::default().fg(style.dim)));
             spans.push(Span::styled(author.clone(), Style::default().fg(style.accent)));
@@ -285,6 +288,24 @@ pub(crate) fn render_bubble_line(
         }
     }
     Line::from(spans)
+}
+
+/// `author`, shortened with `…` so that `author` plus ` · when` fits in
+/// `room` columns. The time is kept whole: it is the shorter, fixed part.
+fn fit_author(author: &str, when: &str, room: usize) -> String {
+    let budget = room.saturating_sub(when.width());
+    if author.width() <= budget {
+        return author.to_string();
+    }
+    let mut out = String::new();
+    for c in author.chars() {
+        if out.width() + c.to_string().width() + 1 > budget {
+            break;
+        }
+        out.push(c);
+    }
+    out.push('…');
+    out
 }
 
 #[cfg(test)]
@@ -352,5 +373,33 @@ mod tests {
         assert_eq!(wrap("abcdefgh", 3), vec!["abc", "def", "gh"]);
         assert_eq!(wrap("short", 0), vec!["short"]);
         assert_eq!(wrap("", 10), vec![""]);
+    }
+
+    #[test]
+    fn long_authors_are_shortened_to_keep_the_box_closed() {
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let text = |line: &BubbleLine| -> String {
+            render_bubble_line(line, 4, 40, false, &style)
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect()
+        };
+        let author = "Daniel Cardona Rojas the Very Long".to_string();
+        let when = "today 00:26".to_string();
+        let top = text(&BubbleLine::Top { author: author.clone(), when: when.clone() });
+        let head = text(&BubbleLine::ReplyHead { author, when });
+        assert_eq!(top.width(), 40, "{top}");
+        assert!(top.ends_with("─┐") && top.contains('…') && top.contains("today 00:26"), "{top}");
+        assert_eq!(head.width(), 40, "{head}");
+        assert!(
+            head.ends_with(" │") && head.contains('…') && head.contains("today 00:26"),
+            "{head}"
+        );
     }
 }

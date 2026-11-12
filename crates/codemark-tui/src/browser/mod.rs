@@ -3429,6 +3429,71 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_bubble_on_another_node_keeps_it_selected() {
+        use crate::component::{InlineComment, InlineThread};
+        use ratatui::buffer::Buffer;
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::layout::Rect;
+
+        let mut layout = test_layout();
+        let area = Rect::new(0, 0, 120, 40);
+        let thread = |id: &str, line: usize, body: &str| InlineThread {
+            root_id: id.into(),
+            anchor_start: line,
+            anchor_end: line,
+            start_col: 0,
+            end_col: 4,
+            entries: vec![InlineComment {
+                author: "a".into(),
+                when: "today".into(),
+                body: body.into(),
+            }],
+        };
+        let code: String = (0..12).map(|i| format!("line{i}\n")).collect();
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        preview.set_code(code);
+        preview
+            .set_threads(vec![thread("first", 1, "first body"), thread("other", 6, "other body")]);
+        layout.set_focus(FocusArea::Main);
+        let render = |layout: &BrowserLayout| {
+            let mut buf = Buffer::empty(area);
+            layout.render(area, &mut buf);
+            buf
+        };
+        let buf = render(&layout);
+
+        // Keyboard: cursor on line 1 focuses the first thread.
+        layout.right_pane.steps.get_step_preview_mut().unwrap().jump_to_line(1);
+        render(&layout);
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.focused_thread_id(), Some("first"));
+
+        // Click the other thread's bubble: press, release, then a few frames.
+        let (x, y) = (0..area.height)
+            .find_map(|y| {
+                let row: String = (0..area.width).map(|x| buf[(x, y)].symbol()).collect();
+                row.find("other body").map(|b| (row[..b].chars().count() as u16, y))
+            })
+            .expect("other bubble on screen");
+        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)]
+        {
+            layout.handle_event(&Event::Mouse(MouseEvent {
+                kind,
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::empty(),
+            }));
+            render(&layout);
+        }
+        for _ in 0..5 {
+            layout.handle_event(&Event::Tick);
+            render(&layout);
+        }
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.focused_thread_id(), Some("other"), "the clicked bubble stays selected");
+    }
+
+    #[test]
     fn fullscreen_left_pane_invalidates_right_hit_test_areas() {
         use ratatui::buffer::Buffer;
         use ratatui::layout::Rect;

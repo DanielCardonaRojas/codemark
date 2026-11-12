@@ -46,6 +46,11 @@ pub enum RightPaneFocus {
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
+    /// Fingerprint of what the code preview shows (bookmark, file, range,
+    /// code). A refresh that re-shows the same thing, such as the panel
+    /// rebuild on `FocusGained`, keeps the user's cursor, scroll, folds and
+    /// selected comment instead of jumping back to the bookmark.
+    shown_preview: Option<u64>,
     /// Collection overview panel shown live while browsing collections
     /// (before a collection is entered with Enter).
     pub overview: MarkdownPanel,
@@ -197,6 +202,7 @@ impl RightPane {
             active_bookmark_id: None,
             active_remote_tour_id: None,
             active_repo_root: None,
+            shown_preview: None,
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -440,22 +446,9 @@ impl RightPane {
         let line_number = step.line_number;
         let line_end = step.line_end;
         let query = step.bookmark.query.clone();
-
-        if let Some(preview) = self.steps.get_step_preview_mut() {
-            // Keyed set reuses a cached highlight when this step was visited
-            // before, and sets code+extension together to avoid a double
-            // highlight when the language changes between steps.
-            preview.set_code_keyed(code, ext);
-            tracing::debug!(target: "codemark::ui", %relative_path, "Setting preview file header");
-            preview.set_file_header(Some(relative_path));
-            if resolved {
-                preview.jump_to_range(line_number, line_end);
-            } else {
-                // Query no longer resolves: show the file without a stale
-                // range highlight/gutter.
-                preview.clear_selection();
-            }
-        }
+        let bookmark_id = step.bookmark.id.clone();
+        let range = resolved.then_some((line_number, line_end));
+        self.show_step_code(&bookmark_id, code, ext, relative_path, range);
 
         // The Query tab is just the raw query text (no rendering), so set it here.
         if let Some(query_preview) = self.steps.get_query_preview_mut() {
@@ -463,6 +456,42 @@ impl RightPane {
             query_preview.set_extension("scm".to_string());
         }
         self.refresh_inline_comments();
+    }
+
+    /// Put a step's code in the preview and place the cursor on its range,
+    /// unless the preview already shows exactly this (same bookmark, file,
+    /// range and code): then it is a refresh, and the user's cursor, scroll,
+    /// folds and selected comment stay as they are.
+    fn show_step_code(
+        &mut self,
+        bookmark_id: &str,
+        code: String,
+        ext: String,
+        header: String,
+        range: Option<(usize, Option<usize>)>,
+    ) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (bookmark_id, &code, &ext, &header, range).hash(&mut hasher);
+        let fingerprint = hasher.finish();
+        if self.shown_preview == Some(fingerprint) {
+            tracing::debug!(target: "codemark::ui", bookmark = %bookmark_id, "preview unchanged; keeping cursor");
+            return;
+        }
+        let Some(preview) = self.steps.get_step_preview_mut() else { return };
+        // Keyed set reuses a cached highlight when this step was visited
+        // before, and sets code+extension together to avoid a double
+        // highlight when the language changes between steps.
+        preview.set_code_keyed(code, ext);
+        tracing::debug!(target: "codemark::ui", relative_path = %header, "Setting preview file header");
+        preview.set_file_header(Some(header));
+        match range {
+            Some((line, end)) => preview.jump_to_range(line, end),
+            // Query no longer resolves: show the file without a stale range
+            // highlight/gutter.
+            None => preview.clear_selection(),
+        }
+        self.shown_preview = Some(fingerprint);
     }
 
     /// Resolve the current step's anchored comments against the code in the
@@ -830,16 +859,8 @@ impl RightPane {
             query,
         } = payload;
 
-        if let Some(preview) = self.steps.get_step_preview_mut() {
-            preview.set_code(code);
-            preview.set_extension(extension);
-            preview.set_file_header(Some(relative_path));
-            if step.resolved {
-                preview.jump_to_range(step.line_number, step.line_end);
-            } else {
-                preview.clear_selection();
-            }
-        }
+        let range = step.resolved.then_some((step.line_number, step.line_end));
+        self.show_step_code(&bookmark_id, code, extension, relative_path, range);
         if let Some(md_panel) = self.steps.get_markdown_mut() {
             md_panel.set_markdown(info_markdown);
         }
@@ -1169,6 +1190,7 @@ impl RightPane {
         self.overview.set_markdown(String::new());
 
         // Clear the rendered preview panels so old content doesn't linger
+        self.shown_preview = None;
         if let Some(preview) = self.steps.get_step_preview_mut() {
             preview.set_code(String::new());
             preview.set_file_header(None);
@@ -2039,6 +2061,42 @@ mod tests {
         // task renders bm-2's markdown.
         assert_eq!(pane.current_step_bookmark_id(), Some("bm-2"));
         assert_eq!(pane.current_step_render_input().map(|(bm, _)| bm.id), Some("bm-2".to_string()));
+    }
+
+    #[test]
+    fn refreshing_the_same_step_keeps_the_preview_cursor() {
+        use crate::component::Component;
+        let (mut pane, db, tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+        let file = tmp.path().join("main.rs");
+        std::fs::write(&file, "fn a() {}\nfn b() {}\nfn c() {}\nfn d() {}\n").unwrap();
+        pane.steps_data[0].file_path = file.to_string_lossy().into_owned();
+        pane.steps_data[0].line_number = 0;
+        pane.steps_data[0].line_end = Some(0);
+        pane.steps_data[0].resolved = true;
+        pane.update_step_code();
+
+        // The user moves the cursor (keyboard or a click on a comment).
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        preview.set_focus(true);
+        for _ in 0..2 {
+            preview.handle_event(&Event::Key(ratatui::crossterm::event::KeyEvent::from(
+                ratatui::crossterm::event::KeyCode::Char('j'),
+            )));
+        }
+        assert_eq!(preview.cursor_position(), Some((2, None)));
+
+        // A refresh of the same step (e.g. the rebuild on FocusGained) keeps it.
+        pane.update_step_code();
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.cursor_position(), Some((2, None)), "refresh must not reset the cursor");
+
+        // A real change (the bookmark moved) places the cursor on the new range.
+        pane.steps_data[0].line_number = 3;
+        pane.steps_data[0].line_end = Some(3);
+        pane.update_step_code();
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.cursor_position(), Some((3, None)));
     }
 
     #[test]
