@@ -23,8 +23,12 @@ pub(crate) fn build_inline_threads(
     bookmark_lines: Option<(usize, usize)>,
     bookmark_bytes: Option<(usize, usize)>,
 ) -> Vec<InlineThread> {
-    let roots: Vec<&BookmarkComment> =
-        bm.comments.iter().filter(|c| c.parent_id.is_none() && c.is_anchored()).collect();
+    let root_of = thread_roots(&bm.comments);
+    let roots: Vec<&BookmarkComment> = bm
+        .comments
+        .iter()
+        .filter(|c| root_of.get(c.id.as_str()) == Some(&c.id.as_str()) && c.is_anchored())
+        .collect();
     let Some((start, end)) = bookmark_lines else { return Vec::new() };
     if roots.is_empty() {
         return Vec::new();
@@ -60,7 +64,10 @@ pub(crate) fn build_inline_threads(
         .zip(states)
         .filter_map(|(root, state)| {
             let AnchorState::Anchored(range) = state else { return None };
-            let replies = bm.comments.iter().filter(|c| c.parent_id.as_deref() == Some(&root.id));
+            // Every descendant, at any depth (imported threads can nest).
+            let replies = bm.comments.iter().filter(|c| {
+                c.id != root.id && root_of.get(c.id.as_str()) == Some(&root.id.as_str())
+            });
             Some(InlineThread {
                 root_id: root.id.clone(),
                 anchor_start: range.start_line,
@@ -71,6 +78,67 @@ pub(crate) fn build_inline_threads(
             })
         })
         .collect()
+}
+
+/// Root id of each comment, following `parent_id` within `comments`. A
+/// comment whose parent is not in the slice is its own root.
+fn thread_roots(comments: &[BookmarkComment]) -> std::collections::HashMap<&str, &str> {
+    let by_id: std::collections::HashMap<&str, &BookmarkComment> =
+        comments.iter().map(|c| (c.id.as_str(), c)).collect();
+    comments
+        .iter()
+        .map(|c| {
+            let mut root = c;
+            // Bounded by the slice length, so a cycle can't loop forever.
+            for _ in 0..comments.len() {
+                match root.parent_id.as_deref().and_then(|p| by_id.get(p)) {
+                    Some(parent) => root = parent,
+                    None => break,
+                }
+            }
+            (c.id.as_str(), root.id.as_str())
+        })
+        .collect()
+}
+
+/// Hash identifying a file's contents, tying a resolved byte range to the
+/// source it was resolved against.
+pub(crate) fn source_hash(code: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// `range` if it was resolved against exactly `code`, else `None` so the
+/// caller falls back to the bookmark's lines.
+pub(crate) fn trusted_range(
+    code: &str,
+    range: Option<(usize, usize)>,
+    source: Option<u64>,
+) -> Option<(usize, usize)> {
+    range.filter(|_| source == Some(source_hash(code)))
+}
+
+/// Key for the threads [`build_inline_threads`] would produce: the code, the
+/// bookmark's range, every comment field the bubbles show, and today's date
+/// (relative times such as "today 14:05" change at midnight).
+pub(crate) fn cache_key(
+    bm: &Bookmark,
+    code: &str,
+    lines: Option<(usize, usize)>,
+    bytes: Option<(usize, usize)>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    (&bm.id, &bm.language, bm.grammar_source.map(|g| g.as_str()), code, lines, bytes)
+        .hash(&mut hasher);
+    for c in &bm.comments {
+        (&c.id, &c.parent_id, &c.query, &c.content_hash, &c.author, &c.body, &c.created_at)
+            .hash(&mut hasher);
+    }
+    chrono::Local::now().date_naive().hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Char column of byte `offset` within its line.
@@ -226,5 +294,32 @@ mod tests {
         assert_eq!(bookmark_span(code, (0, 0), Some((10, 19))), Some((10, 19)));
         assert_eq!(bookmark_span(code, (0, 0), None), Some((0, 19)), "falls back to the line");
         assert_eq!(bookmark_span(code, (0, 0), Some((10, 999))), Some((0, 19)), "stale range");
+    }
+
+    #[test]
+    fn thread_roots_reach_the_root_at_any_depth() {
+        let c = |id: &str, parent: Option<&str>| BookmarkComment {
+            id: id.into(),
+            parent_id: parent.map(str::to_string),
+            ..BookmarkComment::new("b", "a", "x")
+        };
+        let comments = vec![
+            c("root", None),
+            c("r1", Some("root")),
+            c("r2", Some("r1")),
+            c("lost", Some("gone")),
+        ];
+        let roots = thread_roots(&comments);
+        assert_eq!(roots["r2"], "root");
+        assert_eq!(roots["lost"], "lost", "a missing parent makes a root");
+    }
+
+    #[test]
+    fn ranges_from_another_version_of_the_file_are_not_trusted() {
+        let code = "fn a() {}\n";
+        let hash = source_hash(code);
+        assert_eq!(trusted_range(code, Some((0, 9)), Some(hash)), Some((0, 9)));
+        assert_eq!(trusted_range("fn ab() {}\n", Some((0, 9)), Some(hash)), None, "file changed");
+        assert_eq!(trusted_range(code, Some((0, 9)), None), None, "unknown source");
     }
 }

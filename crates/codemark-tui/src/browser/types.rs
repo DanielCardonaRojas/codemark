@@ -487,6 +487,11 @@ pub struct StepData {
     /// persisted location. Scopes anchored comments exactly: whole lines can
     /// hold more than one function.
     pub byte_range: Option<(usize, usize)>,
+    /// [`source_hash`](crate::browser::inline_threads::source_hash) of the
+    /// file `byte_range` was resolved against. The range is only trusted
+    /// while the shown code still hashes the same: offsets into an edited
+    /// file point at other code.
+    pub byte_range_source: Option<u64>,
 }
 
 /// A fully-computed bookmark preview, produced off the UI thread.
@@ -558,6 +563,8 @@ pub struct StepLiveUpdate {
     pub resolved: bool,
     /// Live-resolved byte range of the bookmarked node, if resolved.
     pub byte_range: Option<(usize, usize)>,
+    /// Hash of the source `byte_range` was resolved against.
+    pub byte_range_source: Option<u64>,
     /// Freshly projected health for this step's pager dot.
     pub health: HealthStatus,
 }

@@ -56,6 +56,7 @@ impl BrowserLayout {
     /// cursor (the node at the cursor column in selection mode, else the
     /// whole line). Returns whether the key was used.
     pub(super) fn open_comment_draft(&mut self) -> bool {
+        self.flush_pending_step_preview();
         let Some(step) = self.right_pane.current_step() else { return false };
         if !step.resolved {
             self.notify(
@@ -67,9 +68,12 @@ impl BrowserLayout {
         let bookmark = step.bookmark.clone();
         let bookmark_lines = (step.line_number, step.line_end.unwrap_or(step.line_number));
         let bookmark_bytes = step.byte_range;
+        let bookmark_bytes_source = step.byte_range_source;
         let Some(preview) = self.right_pane.steps.get_step_preview_mut() else { return false };
         let Some((line, col)) = preview.cursor_position() else { return false };
         let code = preview.code().to_string();
+        let bookmark_bytes =
+            super::inline_threads::trusted_range(&code, bookmark_bytes, bookmark_bytes_source);
 
         let anchor = (|| {
             let language = bookmark.grammar()?;
@@ -106,6 +110,7 @@ impl BrowserLayout {
     /// `r` in the code preview: reply to the thread under the cursor. Returns
     /// `false` when the cursor is on no thread, so the key falls through.
     pub(super) fn open_reply_draft(&mut self) -> bool {
+        self.flush_pending_step_preview();
         let Some(step) = self.right_pane.current_step() else { return false };
         let bookmark_id = step.bookmark.id.clone();
         let Some(preview) = self.right_pane.steps.get_step_preview_mut() else { return false };

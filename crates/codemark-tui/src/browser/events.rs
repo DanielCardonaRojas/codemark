@@ -300,6 +300,16 @@ impl BrowserLayout {
     /// quiet window since the last move). Returns true if a redraw is needed.
     /// `update_preview` reads the current pager position, so it renders the
     /// step the user landed on.
+    /// Render a step deferred by fast paging right away. Comment keys call
+    /// this first so the bookmark they act on is the one on screen, not the
+    /// step the pager moved to while its code was still pending.
+    pub(super) fn flush_pending_step_preview(&mut self) {
+        if self.step_preview_dirty {
+            self.step_preview_dirty = false;
+            self.render_step_preview();
+        }
+    }
+
     fn maybe_update_pending_step_preview(&mut self) -> bool {
         if !self.step_preview_dirty {
             return false;
@@ -1117,6 +1127,9 @@ impl BrowserLayout {
                             line_end: Some(live.end_line),
                             resolved: true,
                             byte_range: Some(live.byte_range),
+                            byte_range_source: Some(super::inline_threads::source_hash(
+                                &live.source,
+                            )),
                             health: crate::component::HealthStatus::from(live.status),
                         },
                         Err(e) => {
@@ -1132,6 +1145,7 @@ impl BrowserLayout {
                                 line_end,
                                 resolved: false,
                                 byte_range: None,
+                                byte_range_source: None,
                                 health,
                             }
                         }

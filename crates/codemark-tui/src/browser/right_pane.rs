@@ -66,6 +66,9 @@ pub struct RightPane {
     /// rebuild on `FocusGained`, keeps the user's cursor, scroll, folds and
     /// selected comment instead of jumping back to the bookmark.
     shown_preview: Option<u64>,
+    /// Last resolved inline threads and the key they were built for, so
+    /// paging back to a step doesn't parse its file again.
+    inline_threads_cache: Option<(u64, Vec<crate::component::InlineThread>)>,
     /// Collection overview panel shown live while browsing collections
     /// (before a collection is entered with Enter).
     pub overview: MarkdownPanel,
@@ -218,6 +221,7 @@ impl RightPane {
             active_remote_tour_id: None,
             active_repo_root: None,
             shown_preview: None,
+            inline_threads_cache: None,
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -519,15 +523,26 @@ impl RightPane {
         let Some(step) = self.steps_data.get(self.pager_current) else { return };
         let lines =
             step.resolved.then(|| (step.line_number, step.line_end.unwrap_or(step.line_number)));
-        let byte_range = step.byte_range;
+        let (byte_range, byte_range_source) = (step.byte_range, step.byte_range_source);
         let bookmark = step.bookmark.clone();
+        let cache = &mut self.inline_threads_cache;
         if let Some(preview) = self.steps.get_step_preview_mut() {
-            let threads = super::inline_threads::build_inline_threads(
-                &bookmark,
-                preview.code(),
-                lines,
-                byte_range,
-            );
+            let code = preview.code();
+            let byte_range =
+                super::inline_threads::trusted_range(code, byte_range, byte_range_source);
+            // Resolving parses the whole file; reuse the last result while
+            // the code, range and comments are unchanged (paging, refreshes).
+            let key = super::inline_threads::cache_key(&bookmark, code, lines, byte_range);
+            let threads = match cache {
+                Some((cached_key, threads)) if *cached_key == key => threads.clone(),
+                _ => {
+                    let threads = super::inline_threads::build_inline_threads(
+                        &bookmark, code, lines, byte_range,
+                    );
+                    *cache = Some((key, threads.clone()));
+                    threads
+                }
+            };
             tracing::debug!(
                 target: "codemark::comments",
                 bookmark = %bookmark.id,
@@ -550,6 +565,9 @@ impl RightPane {
             }
         }
         self.refresh_inline_comments();
+        // Supersede any background render of this step started before the
+        // save, or its stale Comments tab would replace the fresh one.
+        self.next_step_preview_request();
         self.update_step_markdown(db);
     }
 
@@ -712,6 +730,7 @@ impl RightPane {
                     // range is stale and must not be highlighted.
                     resolved: false,
                     byte_range: None,
+                    byte_range_source: None,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -855,6 +874,7 @@ impl RightPane {
             // location and is safe to highlight.
             resolved: true,
             byte_range: Some(byte_range),
+            byte_range_source: Some(super::inline_threads::source_hash(&code)),
         };
 
         Ok(Some(Box::new(PreviewPayload {
@@ -999,6 +1019,7 @@ impl RightPane {
             health,
             resolved: false,
             byte_range: None,
+            byte_range_source: None,
         }
     }
 
@@ -1058,6 +1079,7 @@ impl RightPane {
                 step.line_end = Some(live.end_line);
                 step.resolved = true;
                 step.byte_range = Some(live.byte_range);
+                step.byte_range_source = Some(super::inline_threads::source_hash(&live.source));
                 step.health = crate::component::HealthStatus::from(live.status);
             }
             Err(e) => {
@@ -1098,6 +1120,7 @@ impl RightPane {
             step.line_end = u.line_end;
             step.resolved = u.resolved;
             step.byte_range = u.byte_range;
+            step.byte_range_source = u.byte_range_source;
             step.health = u.health;
             if is_current && location_changed {
                 current_changed = true;
@@ -1396,6 +1419,7 @@ impl RightPane {
                         // range as before.
                         resolved: true,
                         byte_range: None,
+                        byte_range_source: None,
                     });
                 }
             }
