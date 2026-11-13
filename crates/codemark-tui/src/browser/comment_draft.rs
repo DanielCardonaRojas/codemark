@@ -276,45 +276,85 @@ impl BrowserLayout {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        let mut lines = vec![
-            Line::from(Span::styled(draft.context(), Style::default().fg(palette.dim))),
-            Line::default(),
-        ];
+        // The body is wrapped here, by display width, rather than by
+        // `Paragraph::wrap`, so the cursor's row is known exactly and the
+        // caret cell past a full line's end isn't dropped at the wrap.
+        let width = inner.width as usize;
+        let header = Paragraph::new(Line::from(Span::styled(
+            draft.context(),
+            Style::default().fg(palette.dim),
+        )))
+        .wrap(Wrap { trim: false });
+        let header_rows = (header.line_count(inner.width) + 1).min(inner.height as usize);
+        header.render(Rect { height: header_rows as u16, ..inner }, buf);
+        let body_area = Rect {
+            y: inner.y + header_rows as u16,
+            height: inner.height - header_rows as u16,
+            ..inner
+        };
+
         let text_style = Style::default().fg(palette.emphasis);
         let (cursor_line, cursor_col) = draft.body.cursor_line_col();
+        let mut rows = Vec::new();
+        let mut cursor_row = 0;
         for (i, text) in draft.body.text().split('\n').enumerate() {
-            if i == cursor_line {
-                lines.push(cursor_line_spans(text, cursor_col, text_style));
-            } else {
-                lines.push(Line::from(Span::styled(text.to_string(), text_style)));
+            let cursor = (i == cursor_line).then_some(cursor_col);
+            if let Some(row) = wrap_draft_line(text, cursor, width, text_style, &mut rows) {
+                cursor_row = row;
             }
         }
         // Scroll just enough to keep the cursor's row in view.
-        let cursor_index = 2 + cursor_line;
-        let rows_before = Paragraph::new(lines[..cursor_index].to_vec())
-            .wrap(Wrap { trim: false })
-            .line_count(inner.width);
-        let cursor_row = rows_before + cursor_col / (inner.width.max(1) as usize);
-        let scroll = (cursor_row + 1).saturating_sub(inner.height as usize);
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll as u16, 0))
-            .render(inner, buf);
+        let scroll = (cursor_row + 1).saturating_sub(body_area.height as usize);
+        Paragraph::new(rows).scroll((scroll as u16, 0)).render(body_area, buf);
     }
 }
 
-/// A draft line with the cursor drawn as a reversed cell on the char at
-/// `col` (a reversed space past the line's end).
-fn cursor_line_spans(text: &str, col: usize, style: Style) -> Line<'static> {
-    let split = text.char_indices().nth(col).map_or(text.len(), |(b, _)| b);
-    let (before, rest) = text.split_at(split);
-    let mut chars = rest.chars();
-    let under = chars.next().map_or_else(|| " ".to_string(), String::from);
-    Line::from(vec![
-        Span::styled(before.to_string(), style),
-        Span::styled(under, style.add_modifier(Modifier::REVERSED)),
-        Span::styled(chars.as_str().to_string(), style),
-    ])
+/// Append `text`'s rows, wrapped at `width` display columns, to `rows`. With
+/// `cursor` (a char column), the char there is drawn reversed as the caret (a
+/// reversed space past the end, which gets its own cell like any char), and
+/// the caret's index in `rows` is returned.
+fn wrap_draft_line(
+    text: &str,
+    cursor: Option<usize>,
+    width: usize,
+    style: Style,
+    rows: &mut Vec<Line<'static>>,
+) -> Option<usize> {
+    use unicode_width::UnicodeWidthChar;
+    let width = width.max(1);
+    let mut chars: Vec<char> = text.chars().collect();
+    if cursor == Some(chars.len()) {
+        chars.push(' ');
+    }
+    let caret = style.add_modifier(Modifier::REVERSED);
+    let mut cursor_row = None;
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut used = 0;
+    let flush = |run: &mut String, spans: &mut Vec<Span<'static>>| {
+        if !run.is_empty() {
+            spans.push(Span::styled(std::mem::take(run), style));
+        }
+    };
+    for (i, c) in chars.into_iter().enumerate() {
+        let w = c.width().unwrap_or(0);
+        if used + w > width && used > 0 {
+            flush(&mut run, &mut spans);
+            rows.push(Line::from(std::mem::take(&mut spans)));
+            used = 0;
+        }
+        if cursor == Some(i) {
+            flush(&mut run, &mut spans);
+            spans.push(Span::styled(c.to_string(), caret));
+            cursor_row = Some(rows.len());
+        } else {
+            run.push(c);
+        }
+        used += w;
+    }
+    flush(&mut run, &mut spans);
+    rows.push(Line::from(spans));
+    cursor_row
 }
 
 /// The first line of `body`, cut to `max` chars with an ellipsis.
@@ -440,6 +480,37 @@ mod tests {
             .find(|&(x, y)| buf[(x, y)].modifier.contains(Modifier::REVERSED))
             .expect("a caret cell");
         assert_eq!(buf[cell].symbol(), "e");
+    }
+
+    fn caret_rows(text: &str, cursor: usize, width: usize) -> (Vec<String>, Option<usize>) {
+        let mut rows = Vec::new();
+        let row = wrap_draft_line(text, Some(cursor), width, Style::default(), &mut rows);
+        (rows.iter().map(|l| l.to_string()).collect(), row)
+    }
+
+    #[test]
+    fn wrapping_tracks_the_caret_row() {
+        assert_eq!(caret_rows("abcdef", 4, 3), (vec!["abc".into(), "def".into()], Some(1)));
+        // A full line with the cursor at its end puts the caret on a new row.
+        assert_eq!(caret_rows("abc", 3, 3), (vec!["abc".into(), " ".into()], Some(1)));
+        assert_eq!(caret_rows("", 0, 3), (vec![" ".into()], Some(0)));
+        // Wide chars take two cells: 3 per 6-wide row.
+        let (rows, row) = caret_rows(&"界".repeat(7), 6, 6);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(row, Some(2));
+    }
+
+    #[test]
+    fn a_long_draft_scrolls_to_keep_the_caret_visible() {
+        let (mut layout, _dir) = layout_with_draft();
+        layout.comment_draft.as_mut().unwrap().body = TextArea::new("界".repeat(200));
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        layout.render_comment_draft(area, &mut buf);
+        let caret = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .find(|&(x, y)| buf[(x, y)].modifier.contains(Modifier::REVERSED));
+        assert!(caret.is_some(), "the caret is on screen");
     }
 
     #[test]
