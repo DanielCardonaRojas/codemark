@@ -38,6 +38,19 @@ impl TextArea {
         (line, before[line_start..].graphemes(true).count())
     }
 
+    /// Edits can join chars into one cluster (deleting the newline before a
+    /// combining accent, say), leaving the cursor inside it; move it back to
+    /// the cluster's start.
+    fn snap_to_grapheme(&mut self) {
+        if let Some((start, _)) = self
+            .text
+            .grapheme_indices(true)
+            .find(|&(start, g)| start < self.cursor && self.cursor < start + g.len())
+        {
+            self.cursor = start;
+        }
+    }
+
     /// Length of the grapheme before / after the cursor (0 at the ends).
     fn prev_len(&self) -> usize {
         self.text[..self.cursor].graphemes(true).next_back().map_or(0, str::len)
@@ -71,6 +84,7 @@ impl TextArea {
     pub(crate) fn insert_str(&mut self, s: &str) {
         self.text.insert_str(self.cursor, s);
         self.cursor += s.len();
+        self.snap_to_grapheme();
         self.wanted_col = None;
     }
 
@@ -78,12 +92,14 @@ impl TextArea {
         let len = self.prev_len();
         self.text.replace_range(self.cursor - len..self.cursor, "");
         self.cursor -= len;
+        self.snap_to_grapheme();
         self.wanted_col = None;
     }
 
     fn delete(&mut self) {
         let len = self.next_len();
         self.text.replace_range(self.cursor..self.cursor + len, "");
+        self.snap_to_grapheme();
         self.wanted_col = None;
     }
 
@@ -209,6 +225,17 @@ mod tests {
         assert_eq!(area.text(), "a👩‍💻z", "the accented e goes whole");
         press(&mut area, KeyCode::Delete);
         assert_eq!(area.text(), "az", "the joined emoji goes whole");
+    }
+
+    #[test]
+    fn an_edit_that_joins_a_cluster_keeps_the_cursor_on_a_boundary() {
+        // Deleting the newline joins the accent onto `a`.
+        let mut area = TextArea::new("a\n\u{301}b");
+        press(&mut area, KeyCode::Home);
+        press(&mut area, KeyCode::Backspace);
+        assert_eq!(area.text(), "a\u{301}b");
+        type_str(&mut area, "X");
+        assert_eq!(area.text(), "Xa\u{301}b", "the accent stays on its letter");
     }
 
     #[test]
