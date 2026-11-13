@@ -1,17 +1,19 @@
 //! A multi-line text buffer with a cursor, for the comment draft modal.
 //!
-//! The cursor is a byte offset into the text, always on a char boundary.
-//! Up/Down keep a "wanted" column (in chars) so moving through a short line
-//! and back lands where the cursor started, as in most editors.
+//! The cursor is a byte offset into the text, always on a grapheme-cluster
+//! boundary, so a joined emoji or an accented letter moves and deletes as one.
+//! Up/Down keep a "wanted" column (in graphemes) so moving through a short
+//! line and back lands where the cursor started, as in most editors.
 
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TextArea {
     text: String,
-    /// Byte offset of the cursor, on a char boundary.
+    /// Byte offset of the cursor, on a grapheme boundary.
     cursor: usize,
-    /// Column (in chars) Up/Down aim for; reset by any horizontal move or edit.
+    /// Column (in graphemes) Up/Down aim for; reset by any horizontal move or edit.
     wanted_col: Option<usize>,
 }
 
@@ -28,12 +30,21 @@ impl TextArea {
         &self.text
     }
 
-    /// The cursor as `(line, column)`, 0-indexed, column in chars.
+    /// The cursor as `(line, column)`, 0-indexed, column in graphemes.
     pub(crate) fn cursor_line_col(&self) -> (usize, usize) {
         let before = &self.text[..self.cursor];
         let line = before.matches('\n').count();
         let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-        (line, before[line_start..].chars().count())
+        (line, before[line_start..].graphemes(true).count())
+    }
+
+    /// Length of the grapheme before / after the cursor (0 at the ends).
+    fn prev_len(&self) -> usize {
+        self.text[..self.cursor].graphemes(true).next_back().map_or(0, str::len)
+    }
+
+    fn next_len(&self) -> usize {
+        self.text[self.cursor..].graphemes(true).next().map_or(0, str::len)
     }
 
     /// Apply an editing or movement key. Returns whether the key was used.
@@ -64,31 +75,25 @@ impl TextArea {
     }
 
     fn backspace(&mut self) {
-        if let Some(c) = self.text[..self.cursor].chars().next_back() {
-            self.cursor -= c.len_utf8();
-            self.text.remove(self.cursor);
-        }
+        let len = self.prev_len();
+        self.text.replace_range(self.cursor - len..self.cursor, "");
+        self.cursor -= len;
         self.wanted_col = None;
     }
 
     fn delete(&mut self) {
-        if self.cursor < self.text.len() {
-            self.text.remove(self.cursor);
-        }
+        let len = self.next_len();
+        self.text.replace_range(self.cursor..self.cursor + len, "");
         self.wanted_col = None;
     }
 
     fn left(&mut self) {
-        if let Some(c) = self.text[..self.cursor].chars().next_back() {
-            self.cursor -= c.len_utf8();
-        }
+        self.cursor -= self.prev_len();
         self.wanted_col = None;
     }
 
     fn right(&mut self) {
-        if let Some(c) = self.text[self.cursor..].chars().next() {
-            self.cursor += c.len_utf8();
-        }
+        self.cursor += self.next_len();
         self.wanted_col = None;
     }
 
@@ -129,7 +134,7 @@ impl TextArea {
             self.text.split_inclusive('\n').take(target as usize).map(str::len).sum();
         let rest = &self.text[start..];
         let line_text = rest.split('\n').next().unwrap_or("");
-        let within = line_text.char_indices().nth(want).map_or(line_text.len(), |(b, _)| b);
+        let within = line_text.grapheme_indices(true).nth(want).map_or(line_text.len(), |(b, _)| b);
         self.cursor = start + within;
     }
 }
@@ -192,6 +197,18 @@ mod tests {
         press(&mut area, KeyCode::Right);
         press(&mut area, KeyCode::Backspace);
         assert_eq!(area.text(), "a");
+    }
+
+    #[test]
+    fn joined_emoji_and_combining_marks_are_one_step() {
+        let mut area = TextArea::new("ae\u{301}👩‍💻z");
+        press(&mut area, KeyCode::Left);
+        press(&mut area, KeyCode::Left);
+        assert_eq!(area.cursor_line_col(), (0, 2), "the emoji is one column");
+        press(&mut area, KeyCode::Backspace);
+        assert_eq!(area.text(), "a👩‍💻z", "the accented e goes whole");
+        press(&mut area, KeyCode::Delete);
+        assert_eq!(area.text(), "az", "the joined emoji goes whole");
     }
 
     #[test]

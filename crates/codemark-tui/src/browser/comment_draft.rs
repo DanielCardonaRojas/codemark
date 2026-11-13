@@ -310,9 +310,10 @@ impl BrowserLayout {
 }
 
 /// Append `text`'s rows, wrapped at `width` display columns, to `rows`. With
-/// `cursor` (a char column), the char there is drawn reversed as the caret (a
-/// reversed space past the end, which gets its own cell like any char), and
-/// the caret's index in `rows` is returned.
+/// `cursor` (a grapheme column), the grapheme there is drawn reversed as the
+/// caret (a reversed space past the end, which gets its own cell like any
+/// other), and the caret's index in `rows` is returned. Wrapping goes by whole
+/// grapheme clusters, so joined emoji and accented letters stay together.
 fn wrap_draft_line(
     text: &str,
     cursor: Option<usize>,
@@ -320,11 +321,12 @@ fn wrap_draft_line(
     style: Style,
     rows: &mut Vec<Line<'static>>,
 ) -> Option<usize> {
-    use unicode_width::UnicodeWidthChar;
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
     let width = width.max(1);
-    let mut chars: Vec<char> = text.chars().collect();
-    if cursor == Some(chars.len()) {
-        chars.push(' ');
+    let mut graphemes: Vec<&str> = text.graphemes(true).collect();
+    if cursor == Some(graphemes.len()) {
+        graphemes.push(" ");
     }
     let caret = style.add_modifier(Modifier::REVERSED);
     let mut cursor_row = None;
@@ -336,8 +338,8 @@ fn wrap_draft_line(
             spans.push(Span::styled(std::mem::take(run), style));
         }
     };
-    for (i, c) in chars.into_iter().enumerate() {
-        let w = c.width().unwrap_or(0);
+    for (i, g) in graphemes.into_iter().enumerate() {
+        let w = g.width();
         if used + w > width && used > 0 {
             flush(&mut run, &mut spans);
             rows.push(Line::from(std::mem::take(&mut spans)));
@@ -345,10 +347,10 @@ fn wrap_draft_line(
         }
         if cursor == Some(i) {
             flush(&mut run, &mut spans);
-            spans.push(Span::styled(c.to_string(), caret));
+            spans.push(Span::styled(g.to_string(), caret));
             cursor_row = Some(rows.len());
         } else {
-            run.push(c);
+            run.push_str(g);
         }
         used += w;
     }
@@ -498,6 +500,15 @@ mod tests {
         let (rows, row) = caret_rows(&"界".repeat(7), 6, 6);
         assert_eq!(rows.len(), 3);
         assert_eq!(row, Some(2));
+        // A joined emoji (two cells) stays whole on the next row.
+        let (rows, _) = caret_rows("abcd👩‍💻", 0, 5);
+        assert_eq!(rows, vec!["abcd".to_string(), "👩‍💻".to_string()]);
+        // The caret on an accented letter covers the whole cluster.
+        let mut rows = Vec::new();
+        wrap_draft_line("e\u{301}x", Some(0), 10, Style::default(), &mut rows);
+        let caret =
+            rows[0].spans.iter().find(|s| s.style.add_modifier.contains(Modifier::REVERSED));
+        assert_eq!(caret.map(|s| s.content.as_ref()), Some("e\u{301}"));
     }
 
     #[test]
