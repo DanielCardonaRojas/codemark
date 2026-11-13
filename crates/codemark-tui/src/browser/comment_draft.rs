@@ -47,8 +47,11 @@ pub(crate) struct CommentDraft {
     kind: DraftKind,
     body: TextArea,
     tab: DraftTab,
-    /// First query line shown in the Query tab.
+    /// Wrapped rows of the Query tab scrolled past.
     query_scroll: usize,
+    /// The furthest the Query tab can scroll, as of its last render (wrapping
+    /// depends on the modal's width, which only rendering knows).
+    query_scroll_max: std::cell::Cell<usize>,
 }
 
 impl CommentDraft {
@@ -144,6 +147,7 @@ impl BrowserLayout {
                     body: TextArea::default(),
                     tab: DraftTab::Body,
                     query_scroll: 0,
+                    query_scroll_max: Default::default(),
                 });
             }
             Err(e) => self.notify(false, e.to_string()),
@@ -166,6 +170,7 @@ impl BrowserLayout {
             body: TextArea::default(),
             tab: DraftTab::Body,
             query_scroll: 0,
+            query_scroll_max: Default::default(),
         });
         true
     }
@@ -249,10 +254,12 @@ impl BrowserLayout {
                 };
             }
             _ if draft.tab == DraftTab::Query => {
-                let last = draft.anchor().map_or(0, |a| a.query.lines().count().saturating_sub(1));
+                let max = draft.query_scroll_max.get();
                 match key.code {
-                    KeyCode::Up => draft.query_scroll = draft.query_scroll.saturating_sub(1),
-                    KeyCode::Down => draft.query_scroll = (draft.query_scroll + 1).min(last),
+                    KeyCode::Up => {
+                        draft.query_scroll = draft.query_scroll.min(max).saturating_sub(1)
+                    }
+                    KeyCode::Down => draft.query_scroll = (draft.query_scroll + 1).min(max),
                     KeyCode::Home => draft.query_scroll = 0,
                     _ => {}
                 }
@@ -370,7 +377,6 @@ impl BrowserLayout {
             let mut lines: Vec<Line> = anchor
                 .query
                 .lines()
-                .skip(draft.query_scroll)
                 .map(|l| Line::from(Span::styled(l.to_string(), query_style)))
                 .collect();
             lines.push(Line::default());
@@ -378,7 +384,12 @@ impl BrowserLayout {
                 format!("content hash {}", anchor.content_hash),
                 Style::default().fg(palette.dim),
             )));
-            Paragraph::new(lines).wrap(Wrap { trim: false }).render(body_area, buf);
+            // Scroll by wrapped rows, so a long line's tail can be reached.
+            let query = Paragraph::new(lines).wrap(Wrap { trim: false });
+            let max = query.line_count(body_area.width).saturating_sub(body_area.height as usize);
+            draft.query_scroll_max.set(max);
+            let scroll = draft.query_scroll.min(max) as u16;
+            query.scroll((scroll, 0)).render(body_area, buf);
             return;
         }
         let text_style = Style::default().fg(palette.emphasis);
@@ -539,6 +550,7 @@ mod tests {
             body: TextArea::new("typed "),
             tab: DraftTab::Body,
             query_scroll: 0,
+            query_scroll_max: Default::default(),
         });
         (layout, dir)
     }
@@ -650,11 +662,41 @@ mod tests {
         assert_eq!(layout.comment_draft.as_ref().unwrap().body.text(), "typed ");
 
         layout.handle_event(&key(KeyCode::Down));
-        assert!(!rendered_text(&layout).contains("(call_expression"), "scrolled past line 1");
+        assert!(
+            rendered_text(&layout).contains("(call_expression"),
+            "a query that fits doesn't scroll"
+        );
 
         layout.handle_event(&key(KeyCode::Tab));
         layout.handle_event(&key(KeyCode::Char('x')));
         assert_eq!(layout.comment_draft.as_ref().unwrap().body.text(), "typed x");
+    }
+
+    #[test]
+    fn query_tab_scrolls_through_a_long_wrapped_line() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut layout, _dir) = layout_with_draft();
+        let long = format!("(call {} TAIL) @target", "x ".repeat(400));
+        layout.comment_draft.as_mut().unwrap().kind = DraftKind::Anchored(CommentAnchor {
+            query: long,
+            content_hash: "abc123".into(),
+            anchor_hint: "L3: ping();".into(),
+        });
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        layout.handle_event(&key(KeyCode::Tab));
+        assert!(!rendered_text(&layout).contains("TAIL"), "one line taller than the pane");
+        for _ in 0..40 {
+            layout.handle_event(&key(KeyCode::Down));
+            rendered_text(&layout);
+        }
+        let shown = rendered_text(&layout);
+        assert!(shown.contains("TAIL"), "{shown}");
+        assert!(shown.contains("content hash abc123"), "{shown}");
+        // Down stops at the end, so one Up moves at once.
+        layout.handle_event(&key(KeyCode::Up));
+        let max = layout.comment_draft.as_ref().unwrap().query_scroll_max.get();
+        assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, max - 1);
     }
 
     #[test]
