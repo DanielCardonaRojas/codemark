@@ -38,16 +38,17 @@ impl TextArea {
         (line, before[line_start..].graphemes(true).count())
     }
 
-    /// Edits can join chars into one cluster (deleting the newline before a
-    /// combining accent, say), leaving the cursor inside it; move it back to
-    /// the cluster's start.
-    fn snap_to_grapheme(&mut self) {
-        if let Some((start, _)) = self
+    /// Edits can join chars into one cluster (typing a letter before a
+    /// combining accent, or deleting the newline before one), leaving the
+    /// cursor inside it. Move it to the cluster's end after an insert, so the
+    /// next char typed comes after this one, and to its start after a delete.
+    fn snap_to_grapheme(&mut self, forward: bool) {
+        if let Some((start, g)) = self
             .text
             .grapheme_indices(true)
             .find(|&(start, g)| start < self.cursor && self.cursor < start + g.len())
         {
-            self.cursor = start;
+            self.cursor = if forward { start + g.len() } else { start };
         }
     }
 
@@ -84,7 +85,7 @@ impl TextArea {
     pub(crate) fn insert_str(&mut self, s: &str) {
         self.text.insert_str(self.cursor, s);
         self.cursor += s.len();
-        self.snap_to_grapheme();
+        self.snap_to_grapheme(true);
         self.wanted_col = None;
     }
 
@@ -92,14 +93,14 @@ impl TextArea {
         let len = self.prev_len();
         self.text.replace_range(self.cursor - len..self.cursor, "");
         self.cursor -= len;
-        self.snap_to_grapheme();
+        self.snap_to_grapheme(false);
         self.wanted_col = None;
     }
 
     fn delete(&mut self) {
         let len = self.next_len();
         self.text.replace_range(self.cursor..self.cursor + len, "");
-        self.snap_to_grapheme();
+        self.snap_to_grapheme(false);
         self.wanted_col = None;
     }
 
@@ -236,6 +237,14 @@ mod tests {
         assert_eq!(area.text(), "a\u{301}b");
         type_str(&mut area, "X");
         assert_eq!(area.text(), "Xa\u{301}b", "the accent stays on its letter");
+    }
+
+    #[test]
+    fn typing_before_a_leading_accent_keeps_the_typed_order() {
+        let mut area = TextArea::new("\u{301}b");
+        press(&mut area, KeyCode::Home);
+        type_str(&mut area, "XY");
+        assert_eq!(area.text(), "X\u{301}Yb");
     }
 
     #[test]
