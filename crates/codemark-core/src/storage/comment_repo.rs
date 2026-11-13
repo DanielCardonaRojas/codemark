@@ -150,6 +150,15 @@ impl Database {
         Ok(())
     }
 
+    /// Replace a comment's body. Returns whether a comment with `id` existed.
+    pub fn update_comment_body(&self, id: &str, body: &str) -> Result<bool> {
+        let changed = self
+            .conn()
+            .execute("UPDATE bookmark_comments SET body = ?2 WHERE id = ?1", [id, body])?;
+        tracing::debug!(target: "codemark::db", %id, changed, "updated comment body");
+        Ok(changed > 0)
+    }
+
     /// Delete a comment and its replies at any depth (imported threads can
     /// nest), returning how many comments went. The `parent_id` foreign key
     /// cascades, but cascaded rows don't show in `changes()`, so the thread is
@@ -240,6 +249,21 @@ mod tests {
         assert_eq!(comments[0].id, "c-1");
         assert_eq!(comments[1].id, "c-2");
         assert_eq!(comments[1].parent_id, Some("c-1".to_string()));
+    }
+
+    #[test]
+    fn update_comment_body_replaces_only_the_body() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm")).unwrap();
+        db.insert_comment(&test_comment("c1", "bm", None)).unwrap();
+        let before = db.get_comment("c1").unwrap().unwrap();
+
+        assert!(db.update_comment_body("c1", "edited").unwrap());
+        let after = db.get_comment("c1").unwrap().unwrap();
+        assert_eq!(after.body, "edited");
+        assert_eq!(after.created_at, before.created_at);
+        assert_eq!(after.author, before.author);
+        assert!(!db.update_comment_body("missing", "x").unwrap());
     }
 
     #[test]

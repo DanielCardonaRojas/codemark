@@ -19,7 +19,6 @@ pub(crate) struct TextArea {
 
 impl TextArea {
     /// A buffer holding `text` with the cursor at its end.
-    #[cfg(test)]
     pub(crate) fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         let cursor = text.len();

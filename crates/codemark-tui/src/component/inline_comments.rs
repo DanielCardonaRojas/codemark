@@ -32,6 +32,8 @@ pub struct InlineThread {
 /// One comment in a thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineComment {
+    /// The comment's id, so an action on it (edit) knows which row to update.
+    pub id: String,
     pub author: String,
     /// Short, already-formatted timestamp (e.g. `2026-11-12 10:04`).
     pub when: String,
@@ -343,6 +345,7 @@ mod tests {
             entries: bodies
                 .iter()
                 .map(|b| InlineComment {
+                    id: String::new(),
                     author: "a".into(),
                     when: "t".into(),
                     body: b.to_string(),
@@ -468,11 +471,13 @@ mod tests {
             end_col: 1,
             entries: vec![
                 InlineComment {
+                    id: String::new(),
                     author: "Daniel Cardona Rojas".into(),
                     when: "yesterday 23:39".into(),
                     body: "a body long enough to wrap".into(),
                 },
                 InlineComment {
+                    id: String::new(),
                     author: "claude".into(),
                     when: "today 09:05".into(),
                     body: "ok".into(),

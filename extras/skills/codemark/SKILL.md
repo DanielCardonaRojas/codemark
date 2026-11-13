@@ -672,6 +672,7 @@ codemark comment add <bookmark-id> --body "Part of **ENG-42**." --created-by cla
 # Reply, list (JSON: anchor = anchored | orphaned | suspended | bookmark), re-anchor, remove
 codemark comment reply <comment-id> --body "Fixed in #212." --created-by claude
 codemark comment list <bookmark-id> --format markdown
+codemark comment edit <comment-id> --body "Reworded."
 codemark comment reanchor <comment-id> --range 60     # or --detach
 codemark comment rm <comment-id>
 ```

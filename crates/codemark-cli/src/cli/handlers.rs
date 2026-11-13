@@ -120,6 +120,7 @@ fn merge_globals(cli: &mut Cli) {
             crate::cli::CommentCommand::Add(a) => g_global(&a.global),
             crate::cli::CommentCommand::Reply(a) => g_global(&a.global),
             crate::cli::CommentCommand::List(a) => g_global(&a.global),
+            crate::cli::CommentCommand::Edit(a) => g_global(&a.global),
             crate::cli::CommentCommand::Rm(a) => g_global(&a.global),
             crate::cli::CommentCommand::Reanchor(a) => g_global(&a.global),
         },
