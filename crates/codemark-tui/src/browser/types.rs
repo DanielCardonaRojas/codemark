@@ -88,6 +88,10 @@ pub enum DialogAction {
     /// the stable id rather than the display name. `repo_root` routes the delete
     /// to the owning repo's database (`None` → focused repo).
     DeleteCollection { id: String, repo_root: Option<String> },
+    /// Delete a comment thread (the root comment and all its replies) on the
+    /// bookmark with `bookmark_id`. `repo_root` routes the delete to the repo
+    /// the preview's bookmark lives in (`None` → focused repo).
+    DeleteCommentThread { root_id: String, bookmark_id: String, repo_root: Option<String> },
     /// Copy or move a collection onto another branch by applying a plan that
     /// was computed (and shown) before the dialog opened. `db_path` is the
     /// database the plan was computed against, so the write lands there even
@@ -106,6 +110,7 @@ impl DialogAction {
         match self {
             Self::DeleteBookmark { .. } => "delete_bookmark",
             Self::DeleteCollection { .. } => "delete_collection",
+            Self::DeleteCommentThread { .. } => "delete_comment_thread",
             Self::ApplyTransfer { .. } => "apply_transfer",
         }
     }

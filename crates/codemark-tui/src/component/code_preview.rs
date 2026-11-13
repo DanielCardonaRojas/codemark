@@ -783,7 +783,12 @@ impl CodePreview {
 
     /// Root id of the thread the cursor is on (see [`Self::focused_thread`]).
     pub fn focused_thread_id(&self) -> Option<&str> {
-        self.focused_thread().map(|i| self.inline.threads[i].root_id.as_str())
+        self.focused_inline_thread().map(|t| t.root_id.as_str())
+    }
+
+    /// The thread under the cursor, if any.
+    pub fn focused_inline_thread(&self) -> Option<&InlineThread> {
+        self.focused_thread().map(|i| &self.inline.threads[i])
     }
 
     /// The line a thread's bubble sits under (its anchor end, clamped).
