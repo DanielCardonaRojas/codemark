@@ -226,7 +226,8 @@ pub(crate) fn render_bubble_line(
     style: &BubbleStyle,
 ) -> Line<'static> {
     let border = Style::default().fg(style.border);
-    let text_style = Style::default().fg(style.text);
+    // Italic sets comment text apart from the code around the bubble.
+    let text_style = Style::default().fg(style.text).add_modifier(Modifier::ITALIC);
     // Box width from its left corner to its right corner.
     let box_width = width.saturating_sub(indent + 1).max(6);
     let inner = box_width - 4;
@@ -424,6 +425,31 @@ mod tests {
             head.ends_with(" │") && head.contains('…') && head.contains("today 00:26"),
             "{head}"
         );
+    }
+
+    #[test]
+    fn comment_text_is_italic_and_the_chrome_is_not() {
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let italic = |line: &BubbleLine, needle: &str| -> bool {
+            render_bubble_line(line, 4, 40, false, &style)
+                .spans
+                .iter()
+                .find(|s| s.content.contains(needle))
+                .unwrap_or_else(|| panic!("{needle:?} not rendered"))
+                .style
+                .add_modifier
+                .contains(Modifier::ITALIC)
+        };
+        assert!(italic(&BubbleLine::Body("root text".into()), "root text"));
+        assert!(italic(&BubbleLine::ReplyBody("reply text".into()), "reply text"));
+        let top = BubbleLine::Top { author: "claude".into(), when: "today 10:00".into() };
+        assert!(!italic(&top, "claude"), "the author stays upright");
+        assert!(!italic(&BubbleLine::Body("x".into()), "│"), "borders stay upright");
     }
 
     #[test]
