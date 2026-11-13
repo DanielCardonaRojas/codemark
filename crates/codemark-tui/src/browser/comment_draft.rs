@@ -1,5 +1,6 @@
 //! Writing a comment from the code preview: `c` comments on the code under
-//! the cursor, `r` replies to the comment the cursor is on.
+//! the cursor, `r` replies to the comment the cursor is on, `d` deletes the
+//! thread the cursor is on (after a confirmation).
 //!
 //! The anchor is generated when the draft opens, so a cursor outside the
 //! bookmark's deepest landmark is refused right away (with the landmark's
@@ -135,6 +136,66 @@ impl BrowserLayout {
         true
     }
 
+    /// `d` in the code preview: ask to delete the thread under the cursor.
+    /// Returns `false` when the cursor is on no thread, so the key falls
+    /// through.
+    pub(super) fn confirm_delete_thread(&mut self) -> bool {
+        self.flush_pending_step_preview();
+        let Some(step) = self.right_pane.current_step() else { return false };
+        let bookmark_id = step.bookmark.id.clone();
+        let Some(preview) = self.right_pane.steps.get_step_preview() else { return false };
+        let Some(thread) = preview.focused_inline_thread() else { return false };
+        let root_id = thread.root_id.clone();
+        let Some(root) = thread.entries.first() else { return false };
+        let excerpt = excerpt(&root.body, 60);
+        let replies = match thread.entries.len() - 1 {
+            0 => String::new(),
+            1 => "\n1 reply will be deleted too.".to_string(),
+            n => format!("\n{n} replies will be deleted too."),
+        };
+        let message = format!("Delete {}'s comment \"{excerpt}\"?{replies}", root.author);
+        self.request_confirmation(super::ConfirmDialog::new(
+            "Delete Comment",
+            message,
+            super::DialogAction::DeleteCommentThread {
+                root_id,
+                bookmark_id,
+                repo_root: self.right_pane.active_repo_root.clone(),
+            },
+        ));
+        true
+    }
+
+    /// Delete a confirmed thread and refresh the preview's comments.
+    pub(super) fn delete_comment_thread(
+        &mut self,
+        root_id: &str,
+        bookmark_id: &str,
+        repo_root: Option<&str>,
+    ) {
+        let db = self.workspace.db_for(repo_root);
+        match db.delete_comment_thread(root_id) {
+            Ok(removed) => {
+                tracing::debug!(target: "codemark::comments", %root_id, removed, "thread deleted from TUI");
+                // The dialog is modal, so the step is normally unchanged; if it
+                // isn't, the other bookmark's comments are fresh on its next load.
+                if self.right_pane.current_step().is_some_and(|s| s.bookmark.id == bookmark_id) {
+                    self.right_pane.reload_step_comments(db);
+                }
+                let message = match removed {
+                    0 => "Comment was already gone".to_string(),
+                    1 => "Comment deleted".to_string(),
+                    n => format!("Comment and {} replies deleted", n - 1),
+                };
+                self.notify(true, message);
+            }
+            Err(e) => {
+                tracing::warn!(target: "codemark::comments", error = %e, "failed to delete comment thread");
+                self.notify(false, format!("Delete failed: {e}"));
+            }
+        }
+    }
+
     /// Keys while the draft is open: type, Enter for a new line, Ctrl+S to
     /// save, Esc to cancel. Always handled (the modal swallows input).
     pub(super) fn handle_comment_draft_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) {
@@ -239,6 +300,16 @@ impl BrowserLayout {
     }
 }
 
+/// The first line of `body`, cut to `max` chars with an ellipsis.
+fn excerpt(body: &str, max: usize) -> String {
+    let first = body.trim().lines().next().unwrap_or("");
+    let mut out: String = first.chars().take(max).collect();
+    if first.chars().count() > max || body.trim().lines().nth(1).is_some() {
+        out.push('…');
+    }
+    out
+}
+
 /// Byte offset of `(line, col)` (0-indexed, `col` in chars) in `code`.
 fn point_offset(code: &str, line: usize, col: usize) -> Option<usize> {
     let mut offset = 0;
@@ -338,5 +409,109 @@ mod tests {
         let draft = layout.comment_draft.as_ref().expect("draft survives a failed save");
         assert_eq!(draft.body, "typed ");
         assert!(layout.pending_notification.as_ref().is_some_and(|n| !n.success));
+    }
+
+    #[test]
+    fn d_on_a_thread_deletes_it_with_its_replies_after_confirming() {
+        use crate::component::{InlineComment, InlineThread};
+        use crate::event::Event;
+        use codemark_core::engine::bookmark::{Bookmark, BookmarkHealth};
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let (mut layout, _dir) = layout_with_draft();
+        layout.comment_draft = None;
+        let bookmark = Bookmark {
+            id: "bm".into(),
+            query: "(function_item) @target".into(),
+            language: "rust".into(),
+            grammar_source: None,
+            forked_from: None,
+            branch: None,
+            file_path: "lib.rs".into(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: Vec::new(),
+        };
+        let comment = |id: &str, parent: Option<&str>| BookmarkComment {
+            id: id.into(),
+            parent_id: parent.map(str::to_string),
+            ..BookmarkComment::new("bm", "ana", format!("{id} body"))
+        };
+        {
+            let db = layout.workspace.db_for(None);
+            db.insert_bookmark(&bookmark).unwrap();
+            db.insert_comments(&[
+                comment("root", None),
+                comment("reply", Some("root")),
+                comment("other", None),
+            ])
+            .unwrap();
+        }
+        layout.right_pane.steps_data = vec![crate::browser::StepData {
+            file_path: "lib.rs".into(),
+            line_number: 0,
+            line_end: Some(3),
+            bookmark,
+            resolution: None,
+            resolutions: Vec::new(),
+            health: crate::component::HealthStatus::Healthy,
+            resolved: true,
+            byte_range: None,
+            byte_range_source: None,
+        }];
+        let entry = |body: &str| InlineComment {
+            author: "ana".into(),
+            when: "today".into(),
+            body: body.into(),
+        };
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        preview.set_code("line0\nline1\nline2\nline3\n".into());
+        preview.set_threads(vec![InlineThread {
+            root_id: "root".into(),
+            anchor_start: 1,
+            anchor_end: 1,
+            start_col: 0,
+            end_col: 4,
+            entries: vec![entry("root body"), entry("reply body")],
+        }]);
+        layout.set_focus(super::super::FocusArea::Main);
+        layout.right_pane.steps.get_step_preview_mut().unwrap().jump_to_line(1);
+
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        layout.handle_event(&key(KeyCode::Char('d')));
+        let dialog = layout.dialog.as_ref().expect("d on a thread asks first");
+        assert!(dialog.message.contains("root body"), "{}", dialog.message);
+        assert!(dialog.message.contains("1 reply"), "{}", dialog.message);
+
+        layout.handle_event(&key(KeyCode::Tab));
+        layout.handle_event(&key(KeyCode::Enter));
+        assert!(layout.dialog.is_none());
+        let left: Vec<String> = layout
+            .workspace
+            .db_for(None)
+            .list_comments_for_bookmark("bm")
+            .unwrap()
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(left, vec!["other".to_string()]);
+        assert!(layout.pending_notification.as_ref().is_some_and(|n| n.success));
+    }
+
+    #[test]
+    fn excerpt_keeps_the_first_line_and_marks_cuts() {
+        assert_eq!(excerpt("short", 10), "short");
+        assert_eq!(excerpt("first\nsecond", 10), "first…");
+        assert_eq!(excerpt("abcdefghij", 4), "abcd…");
     }
 }

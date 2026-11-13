@@ -113,6 +113,7 @@ impl BrowserLayout {
                     bindings.push(("v", "Select a range to comment on"));
                     bindings.push(("w/b/e 0/^/$", "Move by word / line (with v or Enter)"));
                     bindings.push(("r", "Reply to comment"));
+                    bindings.push(("d", "Delete comment thread"));
                     bindings.push(("z", "Fold comment / line"));
                     bindings.push(("Z", "Fold all comments"));
                     bindings.push(("n/N", "Next / previous comment"));

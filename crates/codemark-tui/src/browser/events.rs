@@ -1379,8 +1379,8 @@ impl BrowserLayout {
             {
                 return self.handle_delete_key();
             }
-            // In the code preview, `c` comments on the code under the cursor and
-            // `r` replies to the comment the cursor is on.
+            // In the code preview, `c` comments on the code under the cursor,
+            // `r` replies to the comment the cursor is on and `d` deletes it.
             ratatui::crossterm::event::KeyCode::Char('c')
                 if key.modifiers.is_empty()
                     && self.should_handle_keybindings()
@@ -1393,6 +1393,15 @@ impl BrowserLayout {
                     && self.should_handle_keybindings()
                     && self.code_preview_focused()
                     && self.open_reply_draft() =>
+            {
+                return Some(true);
+            }
+            // `d` on a thread in the code preview asks to delete it.
+            ratatui::crossterm::event::KeyCode::Char('d')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.code_preview_focused()
+                    && self.confirm_delete_thread() =>
             {
                 return Some(true);
             }

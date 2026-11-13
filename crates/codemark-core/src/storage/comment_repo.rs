@@ -150,13 +150,26 @@ impl Database {
         Ok(())
     }
 
-    /// Delete a comment and its replies, returning how many rows went.
+    /// Delete a comment and its replies at any depth (imported threads can
+    /// nest), returning how many comments went. The `parent_id` foreign key
+    /// cascades, but cascaded rows don't show in `changes()`, so the thread is
+    /// counted first.
     pub fn delete_comment_thread(&self, id: &str) -> Result<usize> {
+        const THREAD: &str = "WITH RECURSIVE thread(id) AS (
+                 SELECT id FROM bookmark_comments WHERE id = ?1
+                 UNION
+                 SELECT c.id FROM bookmark_comments c JOIN thread t ON c.parent_id = t.id
+             )";
         let tx = self.conn().unchecked_transaction()?;
-        let replies = tx.execute("DELETE FROM bookmark_comments WHERE parent_id = ?1", [id])?;
-        let root = tx.execute("DELETE FROM bookmark_comments WHERE id = ?1", [id])?;
+        let removed: usize =
+            tx.query_row(&format!("{THREAD} SELECT COUNT(*) FROM thread"), [id], |r| r.get(0))?;
+        tx.execute(
+            &format!("{THREAD} DELETE FROM bookmark_comments WHERE id IN (SELECT id FROM thread)"),
+            [id],
+        )?;
         tx.commit()?;
-        Ok(replies + root)
+        tracing::debug!(target: "codemark::db", %id, removed, "deleted comment thread");
+        Ok(removed)
     }
 
     /// Delete a comment by its ID.
@@ -243,6 +256,24 @@ mod tests {
 
         db.delete_comment("c-1").unwrap();
         assert!(db.get_comment("c-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_thread_removes_nested_replies_only() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-1")).unwrap();
+        db.insert_comments(&[
+            test_comment("root", "bm-1", None),
+            test_comment("r1", "bm-1", Some("root")),
+            test_comment("r2", "bm-1", Some("r1")),
+            test_comment("other", "bm-1", None),
+        ])
+        .unwrap();
+
+        assert_eq!(db.delete_comment_thread("root").unwrap(), 3);
+        let left: Vec<String> =
+            db.list_comments_for_bookmark("bm-1").unwrap().into_iter().map(|c| c.id).collect();
+        assert_eq!(left, vec!["other".to_string()]);
     }
 
     #[test]

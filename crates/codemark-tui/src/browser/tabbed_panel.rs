@@ -257,6 +257,14 @@ pub fn build_merged_content<'a>(
 }
 
 impl TabbedPanel {
+    /// Get the step preview.
+    pub fn get_step_preview(&self) -> Option<&CodePreview> {
+        match self.panels.first() {
+            Some(TabContent::Preview(p)) => Some(p),
+            _ => None,
+        }
+    }
+
     /// Get the step preview for modification.
     pub fn get_step_preview_mut(&mut self) -> Option<&mut CodePreview> {
         match self.panels.get_mut(0) {

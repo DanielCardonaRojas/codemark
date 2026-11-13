@@ -112,6 +112,10 @@ impl BrowserLayout {
                 tracing::debug!(target: "codemark::ui", %id, "deleting bookmark");
                 self.workspace.db_for(repo_root.as_deref()).delete_bookmark(id).map(|_| ())
             }
+            DialogAction::DeleteCommentThread { root_id, bookmark_id, repo_root } => {
+                self.delete_comment_thread(root_id, bookmark_id, repo_root.as_deref());
+                return;
+            }
             DialogAction::DeleteCollection { id, repo_root } => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting collection and its bookmarks");
                 self.workspace
