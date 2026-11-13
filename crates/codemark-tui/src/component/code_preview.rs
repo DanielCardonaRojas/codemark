@@ -116,6 +116,9 @@ pub struct CodePreview {
     /// runs from here to the cursor, both ends included. Only set in
     /// selection mode.
     visual_anchor: Option<(usize, usize)>,
+    /// Whether the user has moved the cursor or scrolled since the code or
+    /// its range was last set from outside (see [`Self::user_moved`]).
+    user_moved: bool,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
     /// Highlighted lines for the code currently displayed, shared via `Rc` so
@@ -172,6 +175,7 @@ impl CodePreview {
             focused: false,
             selection_mode: false,
             visual_anchor: None,
+            user_moved: false,
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Rc::new(Vec::new())),
             highlight_cache: RefCell::new(HashMap::new()),
@@ -242,6 +246,7 @@ impl CodePreview {
         self.selection_mode = false;
         self.visual_anchor = None;
         self.selected_range = None;
+        self.user_moved = false;
     }
 
     /// Cache key for the current highlight: a hash of extension + code. The
@@ -334,9 +339,29 @@ impl CodePreview {
         self.jump_to_range(line_index, None);
     }
 
+    /// Whether the user moved the cursor or scrolled since the code or its
+    /// range was last set (by `set_code*`, [`Self::jump_to_range`] or
+    /// [`Self::clear_selection`]). A range that arrives late, such as a live
+    /// resolution landing after a placeholder, should then not move them.
+    pub fn user_moved(&self) -> bool {
+        self.user_moved
+    }
+
+    /// Update the highlighted line range (0-indexed, inclusive) without
+    /// moving the cursor or the scroll.
+    pub fn set_range_highlight(&mut self, start: usize, end: Option<usize>) {
+        let Some(last) = self.code.lines().count().checked_sub(1) else { return };
+        let start = start.min(last);
+        self.selected_range = end.map(|e| {
+            let e = e.min(last);
+            (start.min(e), start.max(e))
+        });
+    }
+
     /// Jump to and select a line range (0-indexed).
     /// If end is None, only the start line is highlighted.
     pub fn jump_to_range(&mut self, start: usize, end: Option<usize>) {
+        self.user_moved = false;
         self.inline.cursor_on = None;
         let line_count = self.code.lines().count();
         if line_count > 0 {
@@ -383,6 +408,7 @@ impl CodePreview {
         self.selection_mode = false;
         self.visual_anchor = None;
         self.cursor_col = 0;
+        self.user_moved = false;
     }
 
     /// Calculate the scroll offset for a given range of display rows.
@@ -499,6 +525,127 @@ impl CodePreview {
         let anchor = self.visual_anchor?;
         let cursor = (self.selected_line?, self.cursor_col);
         Some(if anchor <= cursor { (anchor, cursor) } else { (cursor, anchor) })
+    }
+
+    /// Keys and mouse input; see [`Component::handle_event`].
+    fn handle_input(&mut self, event: &Event) -> bool {
+        match event {
+            Event::Key(key) => {
+                if !self.focused {
+                    return false;
+                }
+                match key.code {
+                    ratatui::crossterm::event::KeyCode::Down
+                    | ratatui::crossterm::event::KeyCode::Char('j') => {
+                        // Comment bubbles are cursor stops between lines,
+                        // except while extending a visual selection.
+                        if self.visual_anchor.is_some() {
+                            self.visual_line_step(true);
+                        } else {
+                            self.cursor_down();
+                        }
+                        self.scroll_to_cursor();
+                        self.clamp_cursor_col();
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Up
+                    | ratatui::crossterm::event::KeyCode::Char('k') => {
+                        if self.visual_anchor.is_some() {
+                            self.visual_line_step(false);
+                        } else {
+                            self.cursor_up();
+                        }
+                        self.scroll_to_cursor();
+                        self.clamp_cursor_col();
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char('z') => self.toggle_fold(),
+                    ratatui::crossterm::event::KeyCode::Char('Z') => self.toggle_fold_all(),
+                    ratatui::crossterm::event::KeyCode::Char('n') => self.jump_to_thread(true),
+                    ratatui::crossterm::event::KeyCode::Char('N') => self.jump_to_thread(false),
+                    ratatui::crossterm::event::KeyCode::Enter => {
+                        self.selection_mode = !self.selection_mode;
+                        if !self.selection_mode {
+                            self.visual_anchor = None;
+                        }
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char('v') => self.toggle_visual(),
+                    ratatui::crossterm::event::KeyCode::Char(
+                        c @ ('w' | 'b' | 'e' | '0' | '^' | '$'),
+                    ) => self.line_motion(c),
+                    ratatui::crossterm::event::KeyCode::Esc => {
+                        if self.visual_anchor.take().is_some() {
+                            true
+                        } else if self.selection_mode {
+                            self.selection_mode = false;
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    ratatui::crossterm::event::KeyCode::Left
+                    | ratatui::crossterm::event::KeyCode::Char('h') => {
+                        if self.selection_mode
+                            && self.selected_line.is_some()
+                            && self.inline.cursor_on.is_none()
+                        {
+                            self.cursor_col = self.cursor_col.saturating_sub(1);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    ratatui::crossterm::event::KeyCode::Right
+                    | ratatui::crossterm::event::KeyCode::Char('l') => {
+                        if self.selection_mode
+                            && self.inline.cursor_on.is_none()
+                            && let Some(line) = self.selected_line
+                        {
+                            self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
+                            self.clamp_cursor_col();
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                }
+            }
+            Event::Mouse(mouse) => {
+                let area = self.last_area.get();
+                let is_hovered =
+                    area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
+
+                match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::Down(
+                        ratatui::crossterm::event::MouseButton::Left,
+                    ) if is_hovered => self.click_row(mouse.row),
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        let height = area.height as usize;
+                        let total_rows = self.total_rows();
+                        if total_rows > height {
+                            let old_offset = self.scroll_offset.get();
+                            self.scroll_offset.set(
+                                self.scroll_offset
+                                    .get()
+                                    .saturating_add(1)
+                                    .min((total_rows - height) as u16),
+                            );
+                            return old_offset != self.scroll_offset.get();
+                        }
+                        false
+                    }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        let old_offset = self.scroll_offset.get();
+                        self.scroll_offset.set(self.scroll_offset.get().saturating_sub(1));
+                        old_offset != self.scroll_offset.get()
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Leave visual mode, keeping the column cursor where it is.
@@ -848,6 +995,9 @@ impl CodePreview {
         self.scroll_offset.set(offset as u16);
         let row = offset + y.saturating_sub(area.y) as usize;
         let Some(&display_row) = self.layout().rows.get(row) else { return false };
+        // A click places the cursor, as in vim: it ends a `v` selection
+        // rather than stretching it to wherever the click landed.
+        self.visual_anchor = None;
         match display_row {
             DisplayRow::Code(line) => {
                 self.selected_line = Some(line);
@@ -1172,123 +1322,11 @@ impl Component for CodePreview {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        match event {
-            Event::Key(key) => {
-                if !self.focused {
-                    return false;
-                }
-                match key.code {
-                    ratatui::crossterm::event::KeyCode::Down
-                    | ratatui::crossterm::event::KeyCode::Char('j') => {
-                        // Comment bubbles are cursor stops between lines,
-                        // except while extending a visual selection.
-                        if self.visual_anchor.is_some() {
-                            self.visual_line_step(true);
-                        } else {
-                            self.cursor_down();
-                        }
-                        self.scroll_to_cursor();
-                        self.clamp_cursor_col();
-                        true
-                    }
-                    ratatui::crossterm::event::KeyCode::Up
-                    | ratatui::crossterm::event::KeyCode::Char('k') => {
-                        if self.visual_anchor.is_some() {
-                            self.visual_line_step(false);
-                        } else {
-                            self.cursor_up();
-                        }
-                        self.scroll_to_cursor();
-                        self.clamp_cursor_col();
-                        true
-                    }
-                    ratatui::crossterm::event::KeyCode::Char('z') => self.toggle_fold(),
-                    ratatui::crossterm::event::KeyCode::Char('Z') => self.toggle_fold_all(),
-                    ratatui::crossterm::event::KeyCode::Char('n') => self.jump_to_thread(true),
-                    ratatui::crossterm::event::KeyCode::Char('N') => self.jump_to_thread(false),
-                    ratatui::crossterm::event::KeyCode::Enter => {
-                        self.selection_mode = !self.selection_mode;
-                        if !self.selection_mode {
-                            self.visual_anchor = None;
-                        }
-                        true
-                    }
-                    ratatui::crossterm::event::KeyCode::Char('v') => self.toggle_visual(),
-                    ratatui::crossterm::event::KeyCode::Char(
-                        c @ ('w' | 'b' | 'e' | '0' | '^' | '$'),
-                    ) => self.line_motion(c),
-                    ratatui::crossterm::event::KeyCode::Esc => {
-                        if self.visual_anchor.take().is_some() {
-                            true
-                        } else if self.selection_mode {
-                            self.selection_mode = false;
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    ratatui::crossterm::event::KeyCode::Left
-                    | ratatui::crossterm::event::KeyCode::Char('h') => {
-                        if self.selection_mode
-                            && self.selected_line.is_some()
-                            && self.inline.cursor_on.is_none()
-                        {
-                            self.cursor_col = self.cursor_col.saturating_sub(1);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    ratatui::crossterm::event::KeyCode::Right
-                    | ratatui::crossterm::event::KeyCode::Char('l') => {
-                        if self.selection_mode
-                            && self.inline.cursor_on.is_none()
-                            && let Some(line) = self.selected_line
-                        {
-                            self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
-                            self.clamp_cursor_col();
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    _ => false,
-                }
-            }
-            Event::Mouse(mouse) => {
-                let area = self.last_area.get();
-                let is_hovered =
-                    area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
-
-                match mouse.kind {
-                    ratatui::crossterm::event::MouseEventKind::Down(
-                        ratatui::crossterm::event::MouseButton::Left,
-                    ) if is_hovered => self.click_row(mouse.row),
-                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
-                        let height = area.height as usize;
-                        let total_rows = self.total_rows();
-                        if total_rows > height {
-                            let old_offset = self.scroll_offset.get();
-                            self.scroll_offset.set(
-                                self.scroll_offset
-                                    .get()
-                                    .saturating_add(1)
-                                    .min((total_rows - height) as u16),
-                            );
-                            return old_offset != self.scroll_offset.get();
-                        }
-                        false
-                    }
-                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
-                        let old_offset = self.scroll_offset.get();
-                        self.scroll_offset.set(self.scroll_offset.get().saturating_sub(1));
-                        old_offset != self.scroll_offset.get()
-                    }
-                    _ => false,
-                }
-            }
-            _ => false,
+        let handled = self.handle_input(event);
+        if handled && matches!(event, Event::Key(_) | Event::Mouse(_)) {
+            self.user_moved = true;
         }
+        handled
     }
 
     fn focused(&self) -> bool {
@@ -2065,6 +2103,64 @@ mod tests {
         assert!(preview.handle_event(&click(line4)));
         assert_eq!(preview.cursor_position(), Some((4, None)));
         assert_eq!(preview.focused_thread_id(), None);
+    }
+
+    #[test]
+    fn user_moves_are_tracked_until_the_range_is_set_again() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        preview.set_focus(true);
+        assert!(!preview.user_moved());
+        assert!(press(&mut preview, 'j'));
+        assert!(preview.user_moved(), "a handled key counts");
+        preview.jump_to_range(4, Some(5));
+        assert!(!preview.user_moved(), "placing the range resets it");
+        assert!(!press(&mut preview, 'h'), "an unhandled key");
+        assert!(!preview.user_moved());
+
+        // Updating only the highlight moves neither cursor nor scroll.
+        let before = (preview.cursor_position(), preview.scroll_offset.get());
+        preview.set_range_highlight(8, Some(9));
+        assert_eq!(preview.selected_range, Some((8, 9)));
+        assert_eq!((preview.cursor_position(), preview.scroll_offset.get()), before);
+        preview.set_range_highlight(0, None);
+        assert_eq!(preview.selected_range, None);
+    }
+
+    #[test]
+    fn a_click_ends_a_visual_selection() {
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let click = |row: u16| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 20,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let mut preview = CodePreview::new(numbered_code(8), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 20);
+        preview.set_threads(vec![thread("a", 5, 5, &["note"])]);
+        let buf = render_to_buffer(&preview, 60, 20);
+        let row_with =
+            |needle: &str| (0..20).find(|&y| row_text(&buf, y).contains(needle)).unwrap();
+
+        // Clicking a bubble selects it and drops the selection.
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(preview.visual_selection().is_some());
+        assert!(preview.handle_event(&click(row_with("note"))));
+        assert_eq!(preview.focused_thread_id(), Some("a"));
+        assert_eq!(preview.visual_selection(), None);
+
+        // Clicking code moves the cursor instead of extending a selection.
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Esc));
+        assert!(press(&mut preview, 'k'));
+        assert!(press(&mut preview, 'v'));
+        assert!(preview.visual_selection().is_some());
+        assert!(preview.handle_event(&click(row_with("line2"))));
+        assert_eq!(preview.cursor_position().map(|(line, _)| line), Some(2));
+        assert_eq!(preview.visual_selection(), None);
     }
 
     #[test]

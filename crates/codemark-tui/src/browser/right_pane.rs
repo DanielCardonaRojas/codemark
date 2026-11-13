@@ -66,6 +66,10 @@ pub struct RightPane {
     /// rebuild on `FocusGained`, keeps the user's cursor, scroll, folds and
     /// selected comment instead of jumping back to the bookmark.
     shown_preview: Option<u64>,
+    /// [`Self::shown_preview`] without the range: the bookmark, file and code
+    /// shown. When only the range changes (a live resolution replacing a
+    /// placeholder) and the user has since moved, the cursor is kept.
+    shown_preview_base: Option<u64>,
     /// Last resolved inline threads and the key they were built for, so
     /// paging back to a step doesn't parse its file again.
     inline_threads_cache: Option<(u64, Vec<crate::component::InlineThread>)>,
@@ -221,6 +225,7 @@ impl RightPane {
             active_remote_tour_id: None,
             active_repo_root: None,
             shown_preview: None,
+            shown_preview_base: None,
             inline_threads_cache: None,
             needs_preview_update: false,
             cached_show_template,
@@ -491,13 +496,35 @@ impl RightPane {
     ) {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (bookmark_id, &code, &ext, &header, range).hash(&mut hasher);
+        (bookmark_id, &code, &ext, &header).hash(&mut hasher);
+        let base = hasher.finish();
+        range.hash(&mut hasher);
         let fingerprint = hasher.finish();
+        tracing::debug!(
+            target: "codemark::ui",
+            bookmark = %bookmark_id,
+            ?range,
+            code_len = code.len(),
+            same = self.shown_preview == Some(fingerprint),
+            "showing step code"
+        );
         if self.shown_preview == Some(fingerprint) {
             tracing::debug!(target: "codemark::ui", bookmark = %bookmark_id, "preview unchanged; keeping cursor");
             return;
         }
         let Some(preview) = self.steps.get_step_preview_mut() else { return };
+        // Same code, new range, and the user has moved since it was shown:
+        // a range arriving late (the live resolution after a placeholder)
+        // updates the highlight but must not yank the cursor or the scroll.
+        if self.shown_preview_base == Some(base) && preview.user_moved() {
+            tracing::debug!(target: "codemark::ui", bookmark = %bookmark_id, "range updated; keeping the user's cursor");
+            match range {
+                Some((line, end)) => preview.set_range_highlight(line, end),
+                None => preview.set_range_highlight(0, None),
+            }
+            self.shown_preview = Some(fingerprint);
+            return;
+        }
         // Keyed set reuses a cached highlight when this step was visited
         // before, and sets code+extension together to avoid a double
         // highlight when the language changes between steps.
@@ -511,6 +538,7 @@ impl RightPane {
             None => preview.clear_selection(),
         }
         self.shown_preview = Some(fingerprint);
+        self.shown_preview_base = Some(base);
     }
 
     /// Resolve the current step's anchored comments against the code in the
@@ -954,6 +982,24 @@ impl RightPane {
         tour_name: &str,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
     ) {
+        self.load_tour_live_at(db, tour_name, session_cache, 0);
+    }
+
+    /// [`Self::load_tour_live`], opening on step `step` (clamped to the last
+    /// step) and resolving *that* step live.
+    ///
+    /// A reload of the open collection (the rebuild on `FocusGained`) passes
+    /// the current step, so the preview goes straight back to it with its
+    /// live range. Reloading at step 0 and then paging back showed the
+    /// current step from persisted data first, often with no range, so the
+    /// cursor and scroll were reset when the live range arrived.
+    pub fn load_tour_live_at(
+        &mut self,
+        db: &Database,
+        tour_name: &str,
+        session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
+        step: usize,
+    ) {
         let Some(collection) = db.get_collection_by_name(tour_name).ok().flatten() else {
             self.clear_preview_state(db);
             return;
@@ -974,16 +1020,15 @@ impl RightPane {
             return;
         }
 
-        // Resolve only the first step live so the initially-shown code + health
-        // are accurate immediately; the rest are corrected by the background
-        // resolve the caller spawns.
-        if let Some(first) = new_steps.first_mut() {
-            Self::resolve_step_live_into(first, db, session_cache);
-        }
+        // Resolve only the step being opened live so the initially-shown code +
+        // health are accurate immediately; the rest are corrected by the
+        // background resolve the caller spawns.
+        let step = step.min(new_steps.len() - 1);
+        Self::resolve_step_live_into(&mut new_steps[step], db, session_cache);
 
         self.steps_data = new_steps;
         self.pager_total = self.steps_data.len();
-        self.pager_current = 0;
+        self.pager_current = step;
         self.active_tour_name = Some(tour_name.to_string());
         self.active_bookmark_id = None;
         self.active_remote_tour_id = None;
@@ -1244,6 +1289,7 @@ impl RightPane {
 
         // Clear the rendered preview panels so old content doesn't linger
         self.shown_preview = None;
+        self.shown_preview_base = None;
         if let Some(preview) = self.steps.get_step_preview_mut() {
             preview.set_code(String::new());
             preview.set_file_header(None);
@@ -2119,6 +2165,23 @@ mod tests {
     }
 
     #[test]
+    fn reloading_a_tour_reopens_on_the_requested_step() {
+        // The live loader renders the step's markdown on a background task.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _guard = runtime.enter();
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        let mut cache = HashMap::new();
+        pane.load_tour_live_at(&db, "Tour", &mut cache, 1);
+        assert_eq!(pane.pager_current, 1);
+        assert_eq!(pane.current_step_bookmark_id(), Some("bm-2"));
+        // Out of range (steps removed while unfocused): the last step.
+        pane.load_tour_live_at(&db, "Tour", &mut cache, 9);
+        assert_eq!(pane.current_step_bookmark_id(), Some("bm-2"));
+        pane.load_tour_live(&db, "Tour", &mut cache);
+        assert_eq!(pane.current_step_bookmark_id(), Some("bm-1"));
+    }
+
+    #[test]
     fn refreshing_the_same_step_keeps_the_preview_cursor() {
         use crate::component::Component;
         let (mut pane, db, tmp) = right_pane_with_collection();
@@ -2146,12 +2209,61 @@ mod tests {
         let preview = pane.steps.get_step_preview_mut().unwrap();
         assert_eq!(preview.cursor_position(), Some((2, None)), "refresh must not reset the cursor");
 
-        // A real change (the bookmark moved) places the cursor on the new range.
+        // The range changes on the same code after the user moved (a live
+        // resolution landing after a placeholder): the highlight follows, the
+        // cursor stays where the user put it.
         pane.steps_data[0].line_number = 3;
         pane.steps_data[0].line_end = Some(3);
         pane.update_step_code();
         let preview = pane.steps.get_step_preview_mut().unwrap();
-        assert_eq!(preview.cursor_position(), Some((3, None)));
+        assert_eq!(preview.cursor_position(), Some((2, None)), "the user's cursor stays");
+
+        // Without a user move since, a new range places the cursor on it.
+        preview.jump_to_range(0, Some(0));
+        pane.steps_data[0].line_number = 1;
+        pane.steps_data[0].line_end = Some(1);
+        pane.update_step_code();
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.cursor_position(), Some((1, None)));
+    }
+
+    #[test]
+    fn a_live_range_after_a_placeholder_keeps_a_click_made_in_between() {
+        use crate::component::Component;
+        let (mut pane, db, tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+        let file = tmp.path().join("main.rs");
+        let code: String = (0..30).map(|i| format!("fn f{i}() {{}}\n")).collect();
+        std::fs::write(&file, code).unwrap();
+        // Paging shows a step from persisted data first: no range yet.
+        pane.steps_data[0].file_path = file.to_string_lossy().into_owned();
+        pane.steps_data[0].line_number = 20;
+        pane.steps_data[0].line_end = Some(22);
+        pane.steps_data[0].resolved = false;
+        pane.update_step_code();
+
+        // The user clicks a line before the live resolution lands.
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        preview.set_focus(true);
+        preview.handle_event(&Event::Key(ratatui::crossterm::event::KeyEvent::from(
+            ratatui::crossterm::event::KeyCode::Char('j'),
+        )));
+        assert_eq!(preview.cursor_position(), Some((0, None)));
+
+        // The live range arrives: highlighted, but the cursor is not moved.
+        pane.steps_data[0].resolved = true;
+        pane.update_step_code();
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.cursor_position(), Some((0, None)));
+        let buf = {
+            let area = ratatui::layout::Rect::new(0, 0, 40, 40);
+            let mut buf = ratatui::buffer::Buffer::empty(area);
+            preview.render(area, &mut buf);
+            buf
+        };
+        let marked = |y: u16| buf[(0, y)].symbol() == "┃";
+        // Row 0 is the file header; line n is on row n + 1.
+        assert!(marked(21) && marked(23) && !marked(20), "range 20-22 is highlighted");
     }
 
     #[test]

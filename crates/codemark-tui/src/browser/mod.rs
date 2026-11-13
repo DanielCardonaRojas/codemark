@@ -2156,18 +2156,17 @@ impl BrowserLayout {
         // loaded); `None` falls back to the focused repo.
         let active_root = self.right_pane.active_repo_root.clone();
         if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
-            self.right_pane.load_tour_live(
+            // Reopen on the current step, resolved live, so the preview keeps
+            // the user's cursor and scroll instead of flashing step 1 and a
+            // range-less placeholder first.
+            self.right_pane.load_tour_live_at(
                 self.workspace.db_for(active_root.as_deref()),
                 &tour_name,
                 &mut self.session_cache,
+                current_step,
             );
-            // Restore step if possible
-            if current_step < self.right_pane.pager_total {
-                self.right_pane.pager_current = current_step;
-                self.right_pane.update_preview(self.workspace.db_for(active_root.as_deref()));
-            }
-            // load_tour_live resolves only the first step live; resolve the rest
-            // (including the restored current step) off the UI thread.
+            // Only the current step was resolved live; resolve the rest off the
+            // UI thread.
             self.spawn_collection_live_resolve();
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(
