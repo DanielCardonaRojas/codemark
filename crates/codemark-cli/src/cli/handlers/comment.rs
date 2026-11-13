@@ -26,7 +26,7 @@ pub async fn handle_comment(cli: &Cli, mode: &OutputMode, args: &CommentArgs) ->
         CommentCommand::Add(a) => handle_add(cli, mode, a).await,
         CommentCommand::Reply(a) => handle_reply(cli, mode, a).await,
         CommentCommand::List(a) => handle_list(cli, mode, a).await,
-        CommentCommand::Edit(a) => handle_edit(cli, mode, a),
+        CommentCommand::Edit(a) => handle_edit(cli, mode, a).await,
         CommentCommand::Rm(a) => handle_rm(cli, mode, a),
         CommentCommand::Reanchor(a) => handle_reanchor(cli, mode, a).await,
     }
@@ -187,7 +187,7 @@ fn roots_by_id(comments: &[BookmarkComment]) -> std::collections::HashMap<&str, 
         .collect()
 }
 
-fn handle_edit(cli: &Cli, mode: &OutputMode, args: &CommentEditArgs) -> Result<()> {
+async fn handle_edit(cli: &Cli, mode: &OutputMode, args: &CommentEditArgs) -> Result<()> {
     let body = args.body.trim();
     if body.is_empty() {
         return Err(Error::Input("comment body must not be empty".into()));
@@ -195,10 +195,22 @@ fn handle_edit(cli: &Cli, mode: &OutputMode, args: &CommentEditArgs) -> Result<(
     let dbs = open_all_dbs(cli)?;
     let (comment, db) = find_comment(&dbs, &args.comment_id)?;
     db.update_comment_body(&comment.id, body)?;
-    let updated = db
-        .get_comment(&comment.id)?
+
+    // Report where the comment points now, resolved like `comment list`,
+    // not the hint stored when it was made.
+    let bm = db
+        .get_bookmark(&comment.bookmark_id)?
+        .ok_or_else(|| Error::Input(format!("bookmark not found: {}", comment.bookmark_id)))?;
+    let comments = db.list_comments_for_bookmark(&bm.id)?;
+    let mut view = take_view(build_threads(&bm, db, &comments).await?, &comment.id)
         .ok_or_else(|| Error::Operation("comment vanished while editing".into()))?;
-    write_one(mode, &CommentView::fresh(&updated), "Edited comment")
+    view.replies.clear();
+    write_one(mode, &view, "Edited comment")
+}
+
+/// The view of comment `id` among `views` and their replies, at any depth.
+fn take_view(views: Vec<CommentView>, id: &str) -> Option<CommentView> {
+    views.into_iter().find_map(|v| if v.id == id { Some(v) } else { take_view(v.replies, id) })
 }
 
 fn handle_rm(cli: &Cli, mode: &OutputMode, args: &CommentRmArgs) -> Result<()> {
