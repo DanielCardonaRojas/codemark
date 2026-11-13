@@ -1396,6 +1396,15 @@ impl BrowserLayout {
             {
                 return Some(true);
             }
+            // `E` on a thread in the code preview edits your latest comment
+            // in it (`e` is the end-of-word motion there).
+            ratatui::crossterm::event::KeyCode::Char('E')
+                if self.should_handle_keybindings()
+                    && self.code_preview_focused()
+                    && self.open_edit_draft() =>
+            {
+                return Some(true);
+            }
             // `d` on a thread in the code preview asks to delete it.
             ratatui::crossterm::event::KeyCode::Char('d')
                 if key.modifiers.is_empty()

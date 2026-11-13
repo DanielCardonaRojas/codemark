@@ -26,6 +26,7 @@ pub async fn handle_comment(cli: &Cli, mode: &OutputMode, args: &CommentArgs) ->
         CommentCommand::Add(a) => handle_add(cli, mode, a).await,
         CommentCommand::Reply(a) => handle_reply(cli, mode, a).await,
         CommentCommand::List(a) => handle_list(cli, mode, a).await,
+        CommentCommand::Edit(a) => handle_edit(cli, mode, a),
         CommentCommand::Rm(a) => handle_rm(cli, mode, a),
         CommentCommand::Reanchor(a) => handle_reanchor(cli, mode, a).await,
     }
@@ -184,6 +185,20 @@ fn roots_by_id(comments: &[BookmarkComment]) -> std::collections::HashMap<&str, 
             (c.id.as_str(), root.id.as_str())
         })
         .collect()
+}
+
+fn handle_edit(cli: &Cli, mode: &OutputMode, args: &CommentEditArgs) -> Result<()> {
+    let body = args.body.trim();
+    if body.is_empty() {
+        return Err(Error::Input("comment body must not be empty".into()));
+    }
+    let dbs = open_all_dbs(cli)?;
+    let (comment, db) = find_comment(&dbs, &args.comment_id)?;
+    db.update_comment_body(&comment.id, body)?;
+    let updated = db
+        .get_comment(&comment.id)?
+        .ok_or_else(|| Error::Operation("comment vanished while editing".into()))?;
+    write_one(mode, &CommentView::fresh(&updated), "Edited comment")
 }
 
 fn handle_rm(cli: &Cli, mode: &OutputMode, args: &CommentRmArgs) -> Result<()> {

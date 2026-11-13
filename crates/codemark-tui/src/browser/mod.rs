@@ -3444,6 +3444,7 @@ mod tests {
             start_col: 0,
             end_col: 4,
             entries: vec![InlineComment {
+                id: String::new(),
                 author: "a".into(),
                 when: "today".into(),
                 body: body.into(),
