@@ -240,23 +240,24 @@ pub enum RightPaneSize {
 
 impl RightPaneSize {
     /// Cycle to the next layout
-    /// (Regular → Full → PreviewOnly → SideComments → Regular).
+    /// (Regular → Full → SideComments → PreviewOnly → Regular): the details
+    /// pane goes from below the preview, to beside it, to hidden.
     pub fn increase(self) -> Self {
         match self {
             Self::Regular => Self::Full,
-            Self::Full => Self::PreviewOnly,
-            Self::PreviewOnly => Self::SideComments,
-            Self::SideComments => Self::Regular,
+            Self::Full => Self::SideComments,
+            Self::SideComments => Self::PreviewOnly,
+            Self::PreviewOnly => Self::Regular,
         }
     }
 
     /// Cycle to the previous layout
-    /// (Regular → SideComments → PreviewOnly → Full → Regular).
+    /// (Regular → PreviewOnly → SideComments → Full → Regular).
     pub fn decrease(self) -> Self {
         match self {
-            Self::Regular => Self::SideComments,
-            Self::SideComments => Self::PreviewOnly,
-            Self::PreviewOnly => Self::Full,
+            Self::Regular => Self::PreviewOnly,
+            Self::PreviewOnly => Self::SideComments,
+            Self::SideComments => Self::Full,
             Self::Full => Self::Regular,
         }
     }
@@ -364,16 +365,16 @@ mod tests {
     #[test]
     fn test_right_pane_size_increase() {
         assert_eq!(RightPaneSize::Regular.increase(), RightPaneSize::Full);
-        assert_eq!(RightPaneSize::Full.increase(), RightPaneSize::PreviewOnly);
-        assert_eq!(RightPaneSize::PreviewOnly.increase(), RightPaneSize::SideComments);
-        assert_eq!(RightPaneSize::SideComments.increase(), RightPaneSize::Regular);
+        assert_eq!(RightPaneSize::Full.increase(), RightPaneSize::SideComments);
+        assert_eq!(RightPaneSize::SideComments.increase(), RightPaneSize::PreviewOnly);
+        assert_eq!(RightPaneSize::PreviewOnly.increase(), RightPaneSize::Regular);
     }
 
     #[test]
     fn test_right_pane_size_decrease() {
-        assert_eq!(RightPaneSize::Regular.decrease(), RightPaneSize::SideComments);
-        assert_eq!(RightPaneSize::SideComments.decrease(), RightPaneSize::PreviewOnly);
-        assert_eq!(RightPaneSize::PreviewOnly.decrease(), RightPaneSize::Full);
+        assert_eq!(RightPaneSize::Regular.decrease(), RightPaneSize::PreviewOnly);
+        assert_eq!(RightPaneSize::PreviewOnly.decrease(), RightPaneSize::SideComments);
+        assert_eq!(RightPaneSize::SideComments.decrease(), RightPaneSize::Full);
         assert_eq!(RightPaneSize::Full.decrease(), RightPaneSize::Regular);
     }
 

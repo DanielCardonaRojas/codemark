@@ -3553,7 +3553,7 @@ mod tests {
             layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)))
         };
         render(&layout);
-        for _ in 0..3 {
+        for _ in 0..2 {
             assert!(press(&mut layout, '+'));
             render(&layout);
         }
@@ -3596,10 +3596,11 @@ mod tests {
         let preview = layout.right_pane.steps.get_step_preview().unwrap();
         assert_eq!(preview.focused_thread_id(), Some("other"));
 
-        // `+` keeps cycling the layout from the side panel, back to Regular
-        // with the bubbles inline again.
+        // `+` keeps cycling the layout from the side panel: the details pane
+        // hides, the preview takes focus, and bubbles are inline again.
         assert!(press(&mut layout, '+'));
-        assert_eq!(layout.pane_sizes().1, RightPaneSize::Regular);
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::PreviewOnly);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         render(&layout);
         assert!(!layout.right_pane.steps.get_step_preview().unwrap().is_beside());
     }

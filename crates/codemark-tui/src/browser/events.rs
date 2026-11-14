@@ -1952,7 +1952,7 @@ impl BrowserLayout {
                 );
             } else {
                 // Cycle the preview pane layout
-                // (Regular → Full → PreviewOnly → SideComments → Regular).
+                // (Regular → Full → SideComments → PreviewOnly → Regular).
                 let next = if grow {
                     self.right_pane_size.increase()
                 } else {
