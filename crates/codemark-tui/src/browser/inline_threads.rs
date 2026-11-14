@@ -55,6 +55,7 @@ pub(crate) fn build_inline_threads(
 
     let now = chrono::Local::now();
     let comment = |c: &BookmarkComment| InlineComment {
+        id: c.id.clone(),
         author: c.author.clone(),
         when: relative_time(&c.created_at, now),
         body: c.body.clone(),

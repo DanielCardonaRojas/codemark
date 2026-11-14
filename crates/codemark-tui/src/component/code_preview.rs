@@ -1882,6 +1882,7 @@ mod tests {
             entries: bodies
                 .iter()
                 .map(|b| crate::component::InlineComment {
+                    id: String::new(),
                     author: "claude".into(),
                     when: "2026-11-12 10:00".into(),
                     body: b.to_string(),

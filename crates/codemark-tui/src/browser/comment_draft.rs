@@ -1,6 +1,7 @@
 //! Writing a comment from the code preview: `c` comments on the code under
-//! the cursor, `r` replies to the comment the cursor is on, `d` deletes the
-//! thread the cursor is on (after a confirmation).
+//! the cursor, `r` replies to the comment the cursor is on, `E` edits your
+//! latest comment in that thread, `d` deletes the thread the cursor is on
+//! (after a confirmation).
 //!
 //! The anchor is generated when the draft opens, so a cursor outside the
 //! bookmark's deepest landmark is refused right away (with the landmark's
@@ -26,6 +27,8 @@ pub(crate) enum DraftKind {
     Anchored(CommentAnchor),
     /// A reply to the thread with this root comment id.
     Reply { root_id: String },
+    /// A new body for the existing comment with this id.
+    Edit { comment_id: String },
 }
 
 /// Which pane of the draft modal is showing. Only anchored drafts have a
@@ -55,17 +58,35 @@ pub(crate) struct CommentDraft {
 }
 
 impl CommentDraft {
+    fn new(
+        bookmark_id: String,
+        repo_root: Option<String>,
+        kind: DraftKind,
+        body: TextArea,
+    ) -> Self {
+        Self {
+            bookmark_id,
+            repo_root,
+            kind,
+            body,
+            tab: DraftTab::Body,
+            query_scroll: 0,
+            query_scroll_max: Default::default(),
+        }
+    }
+
     fn title(&self) -> &'static str {
         match self.kind {
             DraftKind::Anchored(_) => " New comment ",
             DraftKind::Reply { .. } => " Reply ",
+            DraftKind::Edit { .. } => " Edit comment ",
         }
     }
 
     fn anchor(&self) -> Option<&CommentAnchor> {
         match &self.kind {
             DraftKind::Anchored(anchor) => Some(anchor),
-            DraftKind::Reply { .. } => None,
+            DraftKind::Reply { .. } | DraftKind::Edit { .. } => None,
         }
     }
 
@@ -81,6 +102,7 @@ impl CommentDraft {
         match &self.kind {
             DraftKind::Anchored(anchor) => format!("On {}", anchor.anchor_hint),
             DraftKind::Reply { .. } => "Replying to the comment under the cursor".to_string(),
+            DraftKind::Edit { .. } => "Editing your comment".to_string(),
         }
     }
 }
@@ -140,15 +162,12 @@ impl BrowserLayout {
                 if let Some(preview) = self.right_pane.steps.get_step_preview_mut() {
                     preview.exit_visual();
                 }
-                self.comment_draft = Some(CommentDraft {
-                    bookmark_id: bookmark.id,
-                    repo_root: self.right_pane.active_repo_root.clone(),
-                    kind: DraftKind::Anchored(anchor),
-                    body: TextArea::default(),
-                    tab: DraftTab::Body,
-                    query_scroll: 0,
-                    query_scroll_max: Default::default(),
-                });
+                self.comment_draft = Some(CommentDraft::new(
+                    bookmark.id,
+                    self.right_pane.active_repo_root.clone(),
+                    DraftKind::Anchored(anchor),
+                    TextArea::default(),
+                ));
             }
             Err(e) => self.notify(false, e.to_string()),
         }
@@ -163,15 +182,38 @@ impl BrowserLayout {
         let bookmark_id = step.bookmark.id.clone();
         let Some(preview) = self.right_pane.steps.get_step_preview_mut() else { return false };
         let Some(root_id) = preview.focused_thread_id().map(str::to_string) else { return false };
-        self.comment_draft = Some(CommentDraft {
+        self.comment_draft = Some(CommentDraft::new(
             bookmark_id,
-            repo_root: self.right_pane.active_repo_root.clone(),
-            kind: DraftKind::Reply { root_id },
-            body: TextArea::default(),
-            tab: DraftTab::Body,
-            query_scroll: 0,
-            query_scroll_max: Default::default(),
-        });
+            self.right_pane.active_repo_root.clone(),
+            DraftKind::Reply { root_id },
+            TextArea::default(),
+        ));
+        true
+    }
+
+    /// `E` in the code preview: edit your most recent comment in the thread
+    /// under the cursor. Returns `false` when the cursor is on no thread, so
+    /// the key falls through.
+    pub(super) fn open_edit_draft(&mut self) -> bool {
+        self.open_edit_draft_as(&comment_author())
+    }
+
+    fn open_edit_draft_as(&mut self, author: &str) -> bool {
+        self.flush_pending_step_preview();
+        let Some(step) = self.right_pane.current_step() else { return false };
+        let bookmark_id = step.bookmark.id.clone();
+        let Some(preview) = self.right_pane.steps.get_step_preview() else { return false };
+        let Some(thread) = preview.focused_inline_thread() else { return false };
+        let Some(entry) = thread.entries.iter().rev().find(|e| e.author == author) else {
+            self.notify(false, format!("No comment by {author} in this thread to edit"));
+            return true;
+        };
+        self.comment_draft = Some(CommentDraft::new(
+            bookmark_id,
+            self.right_pane.active_repo_root.clone(),
+            DraftKind::Edit { comment_id: entry.id.clone() },
+            TextArea::new(entry.body.clone()),
+        ));
         true
     }
 
@@ -279,20 +321,30 @@ impl BrowserLayout {
         if body.is_empty() {
             return;
         }
-        let comment = BookmarkComment::new(&draft.bookmark_id, comment_author(), body);
-        let comment = match &draft.kind {
-            DraftKind::Anchored(anchor) => comment.with_anchor(anchor.clone()),
-            DraftKind::Reply { root_id } => {
-                BookmarkComment { parent_id: Some(root_id.clone()), ..comment }
-            }
-        };
         let db = self.workspace.db_for(draft.repo_root.as_deref());
-        match db.insert_comment(&comment) {
-            Ok(()) => {
+        let insert = |comment: BookmarkComment| {
+            db.insert_comment(&comment).map(|()| {
                 tracing::debug!(target: "codemark::comments", id = %comment.id, "comment saved from TUI");
+                (true, "Comment added")
+            })
+        };
+        let new_comment = || BookmarkComment::new(&draft.bookmark_id, comment_author(), &body);
+        // `(success, message)` once written; the modal then closes.
+        let written = match &draft.kind {
+            DraftKind::Anchored(anchor) => insert(new_comment().with_anchor(anchor.clone())),
+            DraftKind::Reply { root_id } => {
+                insert(BookmarkComment { parent_id: Some(root_id.clone()), ..new_comment() })
+            }
+            DraftKind::Edit { comment_id } => db.update_comment_body(comment_id, &body).map(|found| {
+                tracing::debug!(target: "codemark::comments", id = %comment_id, found, "comment edited from TUI");
+                if found { (true, "Comment updated") } else { (false, "The comment was deleted meanwhile") }
+            }),
+        };
+        match written {
+            Ok((success, message)) => {
                 self.right_pane.reload_step_comments(db);
                 self.comment_draft = None;
-                self.notify(true, "Comment added".into());
+                self.notify(success, message.into());
             }
             Err(e) => {
                 tracing::warn!(target: "codemark::comments", error = %e, "failed to save comment");
@@ -543,15 +595,12 @@ mod tests {
         let db = codemark_core::storage::db::Database::open(&dir.path().join("test.db")).unwrap();
         let handler = EventHandler::new(EventHandlerConfig::default()).unwrap();
         let mut layout = BrowserLayout::new(db, handler);
-        layout.comment_draft = Some(CommentDraft {
-            bookmark_id: "missing-bookmark".into(),
-            repo_root: None,
-            kind: DraftKind::Reply { root_id: "missing-root".into() },
-            body: TextArea::new("typed "),
-            tab: DraftTab::Body,
-            query_scroll: 0,
-            query_scroll_max: Default::default(),
-        });
+        layout.comment_draft = Some(CommentDraft::new(
+            "missing-bookmark".into(),
+            None,
+            DraftKind::Reply { root_id: "missing-root".into() },
+            TextArea::new("typed "),
+        ));
         (layout, dir)
     }
 
@@ -719,14 +768,13 @@ mod tests {
         assert!(layout.pending_notification.as_ref().is_some_and(|n| !n.success));
     }
 
-    #[test]
-    fn d_on_a_thread_deletes_it_with_its_replies_after_confirming() {
+    /// A focused code preview with the cursor on thread `root` (by ana)
+    /// holding a reply (by bo); the db also has an unrelated thread `other`.
+    fn layout_with_thread() -> (BrowserLayout, tempfile::TempDir) {
         use crate::component::{InlineComment, InlineThread};
-        use crate::event::Event;
         use codemark_core::engine::bookmark::{Bookmark, BookmarkHealth};
-        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let (mut layout, _dir) = layout_with_draft();
+        let (mut layout, dir) = layout_with_draft();
         layout.comment_draft = None;
         let bookmark = Bookmark {
             id: "bm".into(),
@@ -750,18 +798,18 @@ mod tests {
             annotations: Vec::new(),
             comments: Vec::new(),
         };
-        let comment = |id: &str, parent: Option<&str>| BookmarkComment {
+        let comment = |id: &str, author: &str, parent: Option<&str>| BookmarkComment {
             id: id.into(),
             parent_id: parent.map(str::to_string),
-            ..BookmarkComment::new("bm", "ana", format!("{id} body"))
+            ..BookmarkComment::new("bm", author, format!("{id} body"))
         };
         {
             let db = layout.workspace.db_for(None);
             db.insert_bookmark(&bookmark).unwrap();
             db.insert_comments(&[
-                comment("root", None),
-                comment("reply", Some("root")),
-                comment("other", None),
+                comment("root", "ana", None),
+                comment("reply", "bo", Some("root")),
+                comment("other", "ana", None),
             ])
             .unwrap();
         }
@@ -777,10 +825,11 @@ mod tests {
             byte_range: None,
             byte_range_source: None,
         }];
-        let entry = |body: &str| InlineComment {
-            author: "ana".into(),
+        let entry = |id: &str, author: &str| InlineComment {
+            id: id.into(),
+            author: author.into(),
             when: "today".into(),
-            body: body.into(),
+            body: format!("{id} body"),
         };
         let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
         preview.set_code("line0\nline1\nline2\nline3\n".into());
@@ -790,11 +839,62 @@ mod tests {
             anchor_end: 1,
             start_col: 0,
             end_col: 4,
-            entries: vec![entry("root body"), entry("reply body")],
+            entries: vec![entry("root", "ana"), entry("reply", "bo")],
         }]);
         layout.set_focus(super::super::FocusArea::Main);
         layout.right_pane.steps.get_step_preview_mut().unwrap().jump_to_line(1);
+        (layout, dir)
+    }
 
+    fn body_of(layout: &BrowserLayout, id: &str) -> String {
+        layout.workspace.db_for(None).get_comment(id).unwrap().unwrap().body
+    }
+
+    #[test]
+    fn editing_opens_your_latest_comment_in_the_thread_and_saves_it() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut layout, _dir) = layout_with_thread();
+
+        assert!(layout.open_edit_draft_as("bo"));
+        let draft = layout.comment_draft.as_ref().expect("a draft opens");
+        assert!(matches!(&draft.kind, DraftKind::Edit { comment_id } if comment_id == "reply"));
+        assert_eq!(draft.body.text(), "reply body", "prefilled, cursor at the end");
+
+        for c in " v2".chars() {
+            layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)));
+        }
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+        assert!(layout.comment_draft.is_none(), "saving closes the draft");
+        assert_eq!(body_of(&layout, "reply"), "reply body v2");
+        assert_eq!(body_of(&layout, "root"), "root body", "other comments untouched");
+        assert!(layout.pending_notification.as_ref().is_some_and(|n| n.success));
+    }
+
+    #[test]
+    fn editing_without_a_comment_of_yours_in_the_thread_says_so() {
+        let (mut layout, _dir) = layout_with_thread();
+        assert!(layout.open_edit_draft_as("zed"), "the key is used");
+        assert!(layout.comment_draft.is_none());
+        assert!(layout.pending_notification.as_ref().is_some_and(|n| !n.success));
+    }
+
+    #[test]
+    fn editing_a_comment_deleted_meanwhile_closes_with_a_notice() {
+        let (mut layout, _dir) = layout_with_thread();
+        assert!(layout.open_edit_draft_as("ana"));
+        layout.workspace.db_for(None).delete_comment_thread("root").unwrap();
+        layout.save_comment_draft();
+        assert!(layout.comment_draft.is_none());
+        assert!(layout.pending_notification.as_ref().is_some_and(|n| !n.success));
+    }
+
+    #[test]
+    fn d_on_a_thread_deletes_it_with_its_replies_after_confirming() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let (mut layout, _dir) = layout_with_thread();
         let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
         layout.handle_event(&key(KeyCode::Char('d')));
         let dialog = layout.dialog.as_ref().expect("d on a thread asks first");

@@ -1223,6 +1223,9 @@ pub enum CommentCommand {
     /// List a bookmark's comments with where each one points now
     List(CommentListArgs),
 
+    /// Replace a comment's body
+    Edit(CommentEditArgs),
+
     /// Delete a comment and its replies
     Rm(CommentRmArgs),
 
@@ -1274,6 +1277,18 @@ pub struct CommentListArgs {
     pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub bookmark_id: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentEditArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Comment ID (full UUID or unambiguous prefix)
+    pub comment_id: String,
+
+    /// New Markdown body for the comment
+    #[arg(long)]
+    pub body: String,
 }
 
 #[derive(Debug, clap::Args)]

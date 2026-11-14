@@ -489,6 +489,13 @@ fn comment_add_anchors_inside_the_enclosing_function() {
     let whole = threads.iter().find(|t| t["id"] != anchored.as_str()).unwrap();
     assert_eq!(whole["anchor"], "bookmark");
 
+    let json = cm.run_json(&["comment", "edit", &anchored[..8], "--body", "Edited body"]);
+    assert_eq!(json["data"]["body"], "Edited body");
+    assert_eq!(json["data"]["anchor"], "anchored", "editing keeps the anchor");
+    assert_eq!(json["data"]["lines"]["start"], 118, "the live location");
+    let out = cm.run(&["comment", "edit", &anchored[..8], "--body", "  "]);
+    assert_ne!(out.status, 0, "an empty body is refused");
+
     let json = cm.run_json(&["comment", "reanchor", &anchored[..8], "--detach"]);
     assert_eq!(json["data"]["anchor"], "bookmark");
 
