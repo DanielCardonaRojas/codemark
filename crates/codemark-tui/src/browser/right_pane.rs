@@ -1680,24 +1680,27 @@ impl RightPane {
             pager.render(left[1], buf);
         }
 
+        // As tall as the steps panel beside it, so the borders line up; the
+        // pager row under the steps stays empty on this side.
+        let side = Rect { height: left[0].height, ..columns[1] };
         // The steps panel drew the preview just now, so the list lines up
         // with the code as it is on screen.
-        self.last_details_area.set(columns[1]);
+        self.last_details_area.set(side);
         let preview = self.rail_preview();
         match preview {
             Some(preview) if self.details.tabs.selected_index() == COMMENTS_TAB_INDEX => {
-                self.details.render_with_body(columns[1], buf, |inner, buf| {
+                self.details.render_with_body(side, buf, |inner, buf| {
                     preview.render_rail(inner, buf);
                 });
                 if let Some(hint) = preview.picked_thread_hint() {
-                    render_border_hint(columns[1], buf, &hint);
+                    render_border_hint(side, buf, &hint);
                 }
             }
             _ => {
                 if let Some(preview) = self.steps.get_step_preview() {
                     preview.invalidate_rail();
                 }
-                self.details.render(columns[1], buf);
+                self.details.render(side, buf);
             }
         }
     }

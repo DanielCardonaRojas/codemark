@@ -3581,6 +3581,15 @@ mod tests {
         assert_eq!(hint_y, area.height - 1, "on the bottom border");
         assert!(hint_x > area.width / 2, "under the side panel");
         assert!(layout.get_status_bindings().iter().any(|b| b.key == "r"), "r in the key bar");
+
+        // With a pager under the code, the side panel ends where the steps
+        // panel does so their bottom borders line up.
+        layout.right_pane.pager_total = 3;
+        let buf = render(&layout);
+        let row = |y: u16| -> String { (0..area.width).map(|x| buf[(x, y)].symbol()).collect() };
+        assert_eq!(row(area.height - 2).matches('╯').count(), 2, "{}", row(area.height - 2));
+        assert!(!row(area.height - 1).contains('╯'), "{}", row(area.height - 1));
+        layout.right_pane.pager_total = 0;
         assert!(press(&mut layout, 'j'));
         render(&layout);
         let preview = layout.right_pane.steps.get_step_preview().unwrap();
