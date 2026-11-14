@@ -1752,6 +1752,14 @@ impl RightPane {
             return false;
         }
         let rail_focused = self.rail_has_focus();
+        // The frame's only tabs are the steps panel's, so `[` / `]` switch
+        // those even from the list (focus leaves it if the list goes away).
+        if rail_focused
+            && let Event::Key(key) = event
+            && matches!(key.code, KeyCode::Char('[' | ']'))
+        {
+            return self.steps.handle_event(event);
+        }
         let area = self.last_details_area.get();
         let Some(preview) = self.steps.get_step_preview_mut() else { return false };
         match event {

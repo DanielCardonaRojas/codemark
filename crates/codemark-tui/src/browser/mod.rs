@@ -3622,9 +3622,11 @@ mod tests {
         }));
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "bottom border");
 
-        // A tab switch that hides the list takes focus off it.
-        layout.right_pane.steps.tabs.set_selected(right_pane::INFO_TAB_INDEX);
-        layout.right_pane.handle_event(&Event::Tick);
+        // `]` from the list switches the frame's tabs; Info hides the list,
+        // which takes focus off it.
+        assert!(press(&mut layout, ']'));
+        assert_eq!(layout.right_pane.steps.tabs.selected_index(), right_pane::INFO_TAB_INDEX);
+        assert_eq!(layout.right_pane.details.tabs.selected_index(), 1, "hidden tabs untouched");
         assert_eq!(
             layout.right_pane.focused,
             RightPaneFocus::Steps,
