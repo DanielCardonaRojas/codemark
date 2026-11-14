@@ -471,10 +471,13 @@ impl CodePreview {
     pub fn scroll_by(&mut self, delta: i32) -> bool {
         let height = self.last_area.get().height as usize;
         let max_offset = self.scroll_rows().saturating_sub(height) as i32;
-        let old_offset = self.scroll_offset.get();
-        self.scroll_offset
-            .set((self.scroll_offset.get() as i32 + delta).clamp(0, max_offset) as u16);
-        old_offset != self.scroll_offset.get()
+        // Step from the offset on screen: the stored one can be past the end
+        // (e.g. after the side list's extra range went away), and stepping
+        // from there would take many presses before anything moved.
+        let current = self.visible_offset() as i32;
+        let next = (current + delta).clamp(0, max_offset);
+        self.scroll_offset.set(next as u16);
+        next != current
     }
 
     /// Width of the gutter (range sign + line number + space + comment sign +
@@ -646,24 +649,10 @@ impl CodePreview {
                         ratatui::crossterm::event::MouseButton::Left,
                     ) if is_hovered => self.click_row(mouse.row),
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
-                        let height = area.height as usize;
-                        let total_rows = self.scroll_rows();
-                        if total_rows > height {
-                            let old_offset = self.scroll_offset.get();
-                            self.scroll_offset.set(
-                                self.scroll_offset
-                                    .get()
-                                    .saturating_add(1)
-                                    .min((total_rows - height) as u16),
-                            );
-                            return old_offset != self.scroll_offset.get();
-                        }
-                        false
+                        self.scroll_by(1)
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
-                        let old_offset = self.scroll_offset.get();
-                        self.scroll_offset.set(self.scroll_offset.get().saturating_sub(1));
-                        old_offset != self.scroll_offset.get()
+                        self.scroll_by(-1)
                     }
                     _ => false,
                 }
@@ -2937,5 +2926,35 @@ mod tests {
             &mut Buffer::empty(Rect::new(0, 0, 30, 6)),
         );
         assert!(!preview.scroll_by(1), "four lines fit: nothing to scroll");
+    }
+
+    #[test]
+    fn hiding_the_list_after_scrolling_past_the_end_scrolls_back_at_once() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        let long: Vec<String> = (0..30).map(|i| format!("paragraph {i}")).collect();
+        preview.set_threads(vec![thread("end", 19, 19, &[&long.join("\n")])]);
+        render_beside(&preview, 30, 44, 8);
+        while preview.scroll_by(1) {}
+        let far = preview.scroll_offset.get();
+        assert!(far > 12, "scrolled past the code's last screenful ({far})");
+
+        // The list goes away (Details tab): the code shows its last screenful,
+        // and one wheel-up moves it.
+        preview.invalidate_rail();
+        let area = Rect::new(0, 0, 30, 8);
+        let buf = {
+            let mut buf = Buffer::empty(area);
+            preview.render(area, &mut buf);
+            buf
+        };
+        assert!(row_text(&buf, 7).contains("line19"));
+        let up = Event::Mouse(ratatui::crossterm::event::MouseEvent {
+            kind: ratatui::crossterm::event::MouseEventKind::ScrollUp,
+            column: 5,
+            row: 3,
+            modifiers: ratatui::crossterm::event::KeyModifiers::empty(),
+        });
+        assert!(preview.handle_event(&up), "the first wheel-up moves the code");
+        assert_eq!(preview.scroll_offset.get(), 11);
     }
 }
