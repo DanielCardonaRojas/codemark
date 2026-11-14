@@ -3610,6 +3610,29 @@ mod tests {
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
         assert!(layout.right_pane.rail_has_focus());
 
+        // So does the bottom border under it, where its key hint sits.
+        layout.right_pane.focus_steps();
+        layout.handle_event(&Event::Mouse(ratatui::crossterm::event::MouseEvent {
+            kind: ratatui::crossterm::event::MouseEventKind::Down(
+                ratatui::crossterm::event::MouseButton::Left,
+            ),
+            column: x,
+            row: area.height - 1,
+            modifiers: KeyModifiers::empty(),
+        }));
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "bottom border");
+
+        // A tab switch that hides the list takes focus off it.
+        layout.right_pane.steps.tabs.set_selected(right_pane::INFO_TAB_INDEX);
+        layout.right_pane.handle_event(&Event::Tick);
+        assert_eq!(
+            layout.right_pane.focused,
+            RightPaneFocus::Steps,
+            "focus follows the hidden list"
+        );
+        layout.right_pane.steps.tabs.set_selected(0);
+        render(&layout);
+
         // Beside the Info tab there is no list: the content takes the frame,
         // and the list can't take focus.
         layout.right_pane.focus_steps();

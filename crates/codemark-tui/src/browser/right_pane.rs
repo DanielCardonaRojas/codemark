@@ -1943,6 +1943,21 @@ impl RightPane {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        let handled = self.route_event(event);
+        // Beside the code the list is hidden with the Info and Query tabs: a
+        // tab switch that hid it must not leave focus on it, or keys would go
+        // to a pane that isn't drawn.
+        if self.side_comments.get()
+            && self.focused == RightPaneFocus::Details
+            && self.rail_preview().is_none()
+        {
+            self.focus_steps();
+        }
+        handled
+    }
+
+    /// [`Self::handle_event`] before the focus check.
+    fn route_event(&mut self, event: &Event) -> bool {
         // Handle mouse clicks for internal focus switching
         if let Event::Mouse(mouse) = event
             && let ratatui::crossterm::event::MouseEventKind::Down(
@@ -1954,15 +1969,16 @@ impl RightPane {
 
             let steps_area = self.steps.last_area();
             // Beside the code, one frame holds both: the list's column,
-            // tabs on the border included, is the details pane's; the rest is
-            // the steps panel's.
+            // the frame's border rows included, is the details pane's; the
+            // rest is the steps panel's.
             let rail = self.last_details_area.get();
             if self.side_comments.get()
                 && !rail.is_empty()
                 && col >= rail.x
                 && col < rail.right()
+                // The border rows above and below the list are its own.
                 && row + 1 >= rail.y
-                && row < rail.bottom()
+                && row <= rail.bottom()
             {
                 self.focus_details();
             } else if col >= steps_area.x
