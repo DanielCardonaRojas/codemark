@@ -37,6 +37,18 @@ pub(crate) struct PreviewTemplates<'a> {
     pub comments: &'a str,
 }
 
+/// Draw `hint` right-aligned on the bottom border of `area`, when it fits
+/// between the corners.
+fn render_border_hint(area: Rect, buf: &mut Buffer, hint: &str) {
+    use unicode_width::UnicodeWidthStr;
+    let width = hint.width() as u16;
+    if area.height < 2 || width + 2 > area.width {
+        return;
+    }
+    let style = Style::default().fg(crate::theme::palette().accent);
+    buf.set_string(area.right() - 1 - width, area.bottom() - 1, hint, style);
+}
+
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RightPaneFocus {
@@ -1677,6 +1689,9 @@ impl RightPane {
                 self.details.render_with_body(columns[1], buf, |inner, buf| {
                     preview.render_rail(inner, buf);
                 });
+                if let Some(hint) = preview.picked_thread_hint() {
+                    render_border_hint(columns[1], buf, &hint);
+                }
             }
             _ => {
                 if let Some(preview) = self.steps.get_step_preview() {
@@ -1699,6 +1714,14 @@ impl RightPane {
     /// Select the details pane's Comments tab.
     pub fn show_comments_tab(&mut self) {
         self.details.tabs.set_selected(COMMENTS_TAB_INDEX);
+    }
+
+    /// Whether a thread is picked in the comment list beside the code, so
+    /// its keys belong in the key bar. Returns whether it has replies to fold.
+    pub fn side_thread_picked(&self) -> Option<bool> {
+        let preview = self.rail_preview().filter(|_| self.side_comments.get())?;
+        preview.picked_thread_hint()?;
+        Some(preview.picked_thread_has_replies())
     }
 
     /// Whether the side panel's comment list has focus: keys pick threads

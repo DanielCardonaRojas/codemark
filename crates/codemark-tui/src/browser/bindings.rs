@@ -301,7 +301,15 @@ impl BrowserLayout {
                 }
                 if self.right_pane.rail_has_focus() {
                     bindings.push(KeyBinding::new("j/k", "Comments").with_priority(62));
-                    bindings.push(KeyBinding::new("r", "Reply").with_priority(60));
+                }
+                // The picked thread beside the code: its keys live here and on
+                // the side panel's border, not on the bubble.
+                if let Some(has_replies) = self.right_pane.side_thread_picked() {
+                    bindings.push(KeyBinding::new("r", "Reply").with_priority(61));
+                    bindings.push(KeyBinding::new("n/N", "Next comment").with_priority(59));
+                    if has_replies {
+                        bindings.push(KeyBinding::new("z", "Fold replies").with_priority(58));
+                    }
                 }
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {

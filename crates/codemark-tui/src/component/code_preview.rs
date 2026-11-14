@@ -833,6 +833,23 @@ impl CodePreview {
         self.jump_to_thread(forward)
     }
 
+    /// Keys for the thread picked beside the code, for the side panel's
+    /// border: `None` unless threads are beside the code and one is picked.
+    pub fn picked_thread_hint(&self) -> Option<String> {
+        if !self.inline.beside.get() {
+            return None;
+        }
+        let thread = &self.inline.threads[self.focused_thread()?];
+        let fold = if thread.entries.len() > 1 { " · z fold" } else { "" };
+        Some(format!(" r reply{fold} · n next "))
+    }
+
+    /// Whether the picked thread beside the code has replies to fold.
+    pub fn picked_thread_has_replies(&self) -> bool {
+        self.inline.beside.get()
+            && self.focused_thread().is_some_and(|t| self.inline.threads[t].entries.len() > 1)
+    }
+
     /// Clear the side panel's hit-test areas when it is not drawn.
     pub fn invalidate_rail(&self) {
         self.inline.rail_hits.borrow_mut().clear();
@@ -959,7 +976,9 @@ impl CodePreview {
                     continue;
                 }
                 let y = y as u16;
-                let rendered = render_bubble_line(line, 0, width, is_focused, &style);
+                // The picked thread's keys are on the panel's border instead
+                // (see `picked_thread_hint`), so no bubble carries them.
+                let rendered = render_bubble_line(line, 0, width, false, &style);
                 ratatui::widgets::Paragraph::new(rendered)
                     .render(Rect { x: area.x, y, width: area.width, height: 1 }, buf);
                 drawn = Some(drawn.map_or((y, y), |(first, _)| (first, y)));

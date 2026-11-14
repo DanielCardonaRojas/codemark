@@ -3572,8 +3572,15 @@ mod tests {
         // j / k pick threads from the side panel.
         assert!(press(&mut layout, 'j'));
         render(&layout);
+        let buf = render(&layout);
         let preview = layout.right_pane.steps.get_step_preview().unwrap();
         assert_eq!(preview.focused_thread_id(), Some("first"));
+        // Its keys are on the side panel's bottom border and in the key bar,
+        // not on the bubble.
+        let (hint_x, hint_y) = find(&buf, "r reply").expect("hint on screen");
+        assert_eq!(hint_y, area.height - 1, "on the bottom border");
+        assert!(hint_x > area.width / 2, "under the side panel");
+        assert!(layout.get_status_bindings().iter().any(|b| b.key == "r"), "r in the key bar");
         assert!(press(&mut layout, 'j'));
         render(&layout);
         let preview = layout.right_pane.steps.get_step_preview().unwrap();
