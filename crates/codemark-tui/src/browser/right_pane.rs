@@ -54,6 +54,8 @@ fn render_border_hint(area: Rect, buf: &mut Buffer, hint: &str) {
 pub enum RightPaneFocus {
     Steps,
     Details,
+    /// The comment list beside the code (side-by-side layout only).
+    Comments,
 }
 
 /// Where a bookmark's code is now, from live resolution.
@@ -90,6 +92,11 @@ pub struct RightPane {
     /// ([`RightPaneSize::SideComments`]), its Comments tab listing threads
     /// level with their code.
     side_comments: std::cell::Cell<bool>,
+    /// Where the comment list was drawn beside the code last frame.
+    last_rail_area: std::cell::Cell<Rect>,
+    /// Whether the right pane has focus while the comment list is its
+    /// focused part (the list has no panel of its own to hold it).
+    comments_focus: bool,
     /// Collection overview panel shown live while browsing collections
     /// (before a collection is entered with Enter).
     pub overview: MarkdownPanel,
@@ -245,6 +252,8 @@ impl RightPane {
             shown_preview_base: None,
             inline_threads_cache: None,
             side_comments: std::cell::Cell::new(false),
+            last_rail_area: std::cell::Cell::new(Rect::default()),
+            comments_focus: false,
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -1656,61 +1665,71 @@ impl RightPane {
         }
     }
 
-    /// The side-by-side layout: the preview and pager on the left, the details
-    /// pane on the right at full height.
+    /// The side-by-side layout: one frame around the code and, on its right,
+    /// its comment list, so they read as a single viewport scrolling
+    /// together. The list only accompanies the code: with the Info or Query
+    /// tab the content takes the whole frame. The pager sits under it, then
+    /// the details pane with its Details tab only (the Comments tab is the
+    /// list).
     fn render_side_by_side(&self, area: Rect, buf: &mut Buffer) {
-        // Wide enough for a readable bubble, never more than half the pane.
-        let side_width = (area.width * 2 / 5).clamp(30, 72).min(area.width / 2);
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(side_width)])
-            .split(area);
         let pager_height = if self.pager_total > 1 { 1 } else { 0 };
-        let left = Layout::default()
+        let details_height = if self.focused == RightPaneFocus::Details {
+            self.info_config.max
+        } else {
+            self.info_config.min
+        };
+        let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(pager_height)])
-            .split(columns[0]);
-
-        // As tall as the steps panel beside it, so the borders line up; the
-        // pager row under the steps stays empty on this side.
-        let side = Rect { height: left[0].height, ..columns[1] };
-        let list = self
-            .rail_preview()
-            .filter(|_| self.details.tabs.selected_index() == COMMENTS_TAB_INDEX);
-        // The list's width sets the preview's scroll range, so give it before
-        // the preview draws; without the list there is no extra range.
-        if let Some(preview) = self.steps.get_step_preview() {
-            let inner_width = if list.is_some() { side.width.saturating_sub(2) } else { 0 };
-            preview.set_rail_width(inner_width);
-        }
-
-        self.steps.health_label.set(self.preview_health());
-        self.render_steps_or_loading(left[0], buf);
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(pager_height),
+                Constraint::Length(details_height),
+            ])
+            .split(area);
+        let frame = rows[0];
         if self.pager_total > 1 {
             use crate::component::Pager;
             let health = self.steps_data.iter().map(|step| step.health).collect();
             let pager = Pager::new(self.pager_total, self.pager_current).with_health(health);
-            pager.render(left[1], buf);
+            pager.render(rows[1], buf);
+        }
+        self.last_details_area.set(rows[2]);
+        self.details.render_single_tab(rows[2], buf, DETAILS_TAB_INDEX);
+
+        let Some(preview) = self.rail_preview() else {
+            if let Some(preview) = self.steps.get_step_preview() {
+                preview.invalidate_rail();
+            }
+            self.last_rail_area.set(Rect::default());
+            self.render_steps_or_loading(frame, buf);
+            return;
+        };
+
+        let inner = Block::bordered().inner(frame);
+        // Wide enough for a readable bubble, never more than half the view.
+        let side_width = (inner.width * 2 / 5).clamp(30, 72).min(inner.width / 2);
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(side_width)])
+            .split(inner);
+        let (code, rail) = (columns[0], columns[1]);
+        // The list's width sets the preview's scroll range, so give it before
+        // the preview draws.
+        preview.set_rail_width(rail.width);
+
+        // One frame for both: focused when either side has focus.
+        let focused = self.steps.focused || self.rail_has_focus();
+        self.steps.health_label.set(self.preview_health());
+        self.steps.render_frame_as(frame, buf, focused);
+        if let Some(panel) = self.steps.panels.get(self.steps.tabs.selected_index()) {
+            panel.render(code, buf);
         }
 
-        // The steps panel drew the preview just now, so the list lines up
-        // with the code as it is on screen.
-        self.last_details_area.set(side);
-        match list {
-            Some(preview) => {
-                self.details.render_with_body(side, buf, |inner, buf| {
-                    preview.render_rail(inner, buf);
-                });
-                if let Some(hint) = preview.picked_thread_hint() {
-                    render_border_hint(side, buf, &hint);
-                }
-            }
-            _ => {
-                if let Some(preview) = self.steps.get_step_preview() {
-                    preview.invalidate_rail();
-                }
-                self.details.render(side, buf);
-            }
+        // The preview drew its code just now, so the list lines up with it.
+        self.last_rail_area.set(rail);
+        preview.render_rail(rail, buf);
+        if let Some(hint) = preview.picked_thread_hint() {
+            render_border_hint(frame, buf, &hint);
         }
     }
 
@@ -1723,9 +1742,24 @@ impl RightPane {
         self.steps.get_step_preview()
     }
 
-    /// Select the details pane's Comments tab.
-    pub fn show_comments_tab(&mut self) {
-        self.details.tabs.set_selected(COMMENTS_TAB_INDEX);
+    /// Select the details pane's Details tab: beside the code the bottom
+    /// pane shows only that one (its Comments tab is the list).
+    pub fn show_details_tab(&mut self) {
+        self.details.tabs.set_selected(DETAILS_TAB_INDEX);
+    }
+
+    /// Focus the comment list beside the code, when it is shown; otherwise
+    /// the steps.
+    pub fn focus_comments(&mut self) {
+        if !self.side_comments.get() || self.rail_preview().is_none() {
+            self.focus_steps();
+            return;
+        }
+        self.focused = RightPaneFocus::Comments;
+        self.comments_focus = true;
+        self.steps.set_focus(false);
+        self.details.set_focus(false);
+        self.overview.set_focus(false);
     }
 
     /// Whether a thread is picked in the comment list beside the code, so
@@ -1740,9 +1774,8 @@ impl RightPane {
     /// there, and `r` / `d` act on the picked one.
     pub fn rail_has_focus(&self) -> bool {
         self.side_comments.get()
-            && self.focused == RightPaneFocus::Details
-            && self.details.focused
-            && self.details.tabs.selected_index() == COMMENTS_TAB_INDEX
+            && self.focused == RightPaneFocus::Comments
+            && self.comments_focus
             && self.rail_preview().is_some()
     }
 
@@ -1751,14 +1784,19 @@ impl RightPane {
     /// the bubble under it. Returns whether the event was used.
     fn handle_rail_event(&mut self, event: &Event) -> bool {
         use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEventKind};
-        if !self.side_comments.get()
-            || self.details.tabs.selected_index() != COMMENTS_TAB_INDEX
-            || self.rail_preview().is_none()
-        {
+        if !self.side_comments.get() || self.rail_preview().is_none() {
             return false;
         }
         let rail_focused = self.rail_has_focus();
-        let area = self.last_details_area.get();
+        // The frame's only tabs are the steps panel's, so `[` / `]` switch
+        // those even from the list (focus leaves it if the list goes away).
+        if rail_focused
+            && let Event::Key(key) = event
+            && matches!(key.code, KeyCode::Char('[' | ']'))
+        {
+            return self.steps.handle_event(event);
+        }
+        let area = self.last_rail_area.get();
         let Some(preview) = self.steps.get_step_preview_mut() else { return false };
         match event {
             Event::Key(key)
@@ -1776,9 +1814,7 @@ impl RightPane {
                 handled
             }
             Event::Mouse(mouse)
-                // Below the top border, which holds the tabs.
-                if mouse.row > area.y
-                    && area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) =>
+                if area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) =>
             {
                 match mouse.kind {
                     MouseEventKind::ScrollDown => preview.scroll_by(1),
@@ -1951,6 +1987,20 @@ impl RightPane {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        let handled = self.route_event(event);
+        // Beside the code the list is hidden with the Info and Query tabs: a
+        // tab switch that hid it must not leave focus on it, or keys would go
+        // to a pane that isn't drawn.
+        if self.focused == RightPaneFocus::Comments
+            && (!self.side_comments.get() || self.rail_preview().is_none())
+        {
+            self.focus_steps();
+        }
+        handled
+    }
+
+    /// [`Self::handle_event`] before the focus check.
+    fn route_event(&mut self, event: &Event) -> bool {
         // Handle mouse clicks for internal focus switching
         if let Event::Mouse(mouse) = event
             && let ratatui::crossterm::event::MouseEventKind::Down(
@@ -1961,7 +2011,20 @@ impl RightPane {
             let row = mouse.row;
 
             let steps_area = self.steps.last_area();
-            if col >= steps_area.x
+            // Beside the code, one frame holds both: the list's column,
+            // the frame's border rows included, is the list's; the rest is
+            // the steps panel's.
+            let rail = self.last_rail_area.get();
+            if self.side_comments.get()
+                && !rail.is_empty()
+                && col >= rail.x
+                && col < rail.right()
+                // The border rows above and below the list are its own.
+                && row + 1 >= rail.y
+                && row <= rail.bottom()
+            {
+                self.focus_comments();
+            } else if col >= steps_area.x
                 && col < steps_area.x + steps_area.width
                 && row >= steps_area.y
                 && row < steps_area.y + steps_area.height
@@ -2002,7 +2065,23 @@ impl RightPane {
                         self.overview.handle_event(event)
                     }
                     RightPaneFocus::Steps => self.steps.handle_event(event),
+                    // Beside the code the pane holds only its Details tab,
+                    // so `[` / `]` have nothing to switch to.
+                    RightPaneFocus::Details
+                        if self.side_comments.get()
+                            && matches!(
+                                event,
+                                Event::Key(key) if matches!(
+                                    key.code,
+                                    ratatui::crossterm::event::KeyCode::Char('[' | ']')
+                                )
+                            ) =>
+                    {
+                        true
+                    }
                     RightPaneFocus::Details => self.details.handle_event(event),
+                    // The list's keys were handled above.
+                    RightPaneFocus::Comments => false,
                 }
             }
         };
@@ -2056,12 +2135,14 @@ impl RightPane {
             RightPaneFocus::Steps if self.overview_active => self.overview.set_focus(focused),
             RightPaneFocus::Steps => self.steps.set_focus(focused),
             RightPaneFocus::Details => self.details.set_focus(focused),
+            RightPaneFocus::Comments => self.comments_focus = focused,
         }
     }
 
     /// Focus the steps section (or the overview when it occupies the main area).
     pub fn focus_steps(&mut self) {
         self.focused = RightPaneFocus::Steps;
+        self.comments_focus = false;
         // Only the panel actually rendered in the main area should be focused.
         if self.overview_active {
             self.overview.set_focus(true);
@@ -2083,6 +2164,7 @@ impl RightPane {
             return;
         }
         self.focused = RightPaneFocus::Details;
+        self.comments_focus = false;
         self.details.set_focus(true);
         self.steps.set_focus(false);
         self.overview.set_focus(false);
@@ -2124,11 +2206,20 @@ impl RightPane {
         }
     }
 
-    /// Toggle internal focus between Steps and Details.
-    pub fn toggle_internal_focus(&mut self) {
-        match self.focused {
-            RightPaneFocus::Steps => self.focus_details(),
-            RightPaneFocus::Details => self.focus_steps(),
+    /// Cycle internal focus: Steps and Details, with the comment list
+    /// between them while it is shown beside the code.
+    pub fn cycle_internal_focus(&mut self, forward: bool) {
+        let comments = self.side_comments.get() && self.rail_preview().is_some();
+        match (self.focused, forward) {
+            (RightPaneFocus::Steps, true) | (RightPaneFocus::Details, false) if comments => {
+                self.focus_comments()
+            }
+            (RightPaneFocus::Comments, true) | (RightPaneFocus::Steps, false) => {
+                self.focus_details()
+            }
+            (RightPaneFocus::Comments, false) => self.focus_steps(),
+            (RightPaneFocus::Steps, _) => self.focus_details(),
+            (RightPaneFocus::Details, _) => self.focus_steps(),
         }
     }
 
@@ -2153,6 +2244,7 @@ impl RightPane {
             ),
             // Among the steps tabs only the Info tab is markdown.
             RightPaneFocus::Steps => self.steps.get_markdown().is_some(),
+            RightPaneFocus::Comments => false,
         }
     }
 
@@ -2182,6 +2274,7 @@ impl RightPane {
                     None
                 }
             }
+            RightPaneFocus::Comments => None,
             RightPaneFocus::Steps => {
                 // Only return markdown if the Info tab is selected
                 if self.steps.tabs.selected_index() == INFO_TAB_INDEX {

@@ -3025,7 +3025,7 @@ impl BrowserLayout {
     pub fn next_focus(&mut self) {
         match self.focus {
             FocusArea::Main => {
-                self.right_pane.toggle_internal_focus();
+                self.right_pane.cycle_internal_focus(true);
             }
             _ => {
                 let cycle = self.left_pane_focus_cycle();
@@ -3043,7 +3043,7 @@ impl BrowserLayout {
     pub fn previous_focus(&mut self) {
         match self.focus {
             FocusArea::Main => {
-                self.right_pane.toggle_internal_focus();
+                self.right_pane.cycle_internal_focus(false);
             }
             _ => {
                 let cycle = self.left_pane_focus_cycle();
@@ -3559,10 +3559,10 @@ mod tests {
         }
         assert_eq!(layout.pane_sizes().1, RightPaneSize::SideComments);
 
-        // Entering the layout shows the Comments tab, which lists the bubbles
-        // level with the code.
-        assert_eq!(layout.right_pane.details.tabs.selected_index(), 1);
-        layout.right_pane.focus_details();
+        // The comment list beside the code is its own focus; the details
+        // pane below keeps only its Details tab.
+        assert_eq!(layout.right_pane.details.tabs.selected_index(), 0, "Details below");
+        layout.right_pane.focus_comments();
         let buf = render(&layout);
         let (_, code_y) = find(&buf, "line2").expect("code on screen");
         let (x, y) = find(&buf, "first body").expect("bubble in the side panel");
@@ -3570,27 +3570,99 @@ mod tests {
         assert_eq!(y, code_y + 1, "the bubble's header is level with line2");
         assert!(layout.right_pane.rail_has_focus());
 
+        let row = |buf: &Buffer, y: u16| -> String {
+            (0..area.width).map(|x| buf[(x, y)].symbol()).collect()
+        };
+        // The frame's bottom border is the first row closing it.
+        let frame_bottom = |buf: &Buffer| -> u16 {
+            (1..area.height).find(|&y| row(buf, y).contains('╯')).expect("frame closes")
+        };
+
         // j / k pick threads from the side panel.
         assert!(press(&mut layout, 'j'));
         render(&layout);
         let buf = render(&layout);
         let preview = layout.right_pane.steps.get_step_preview().unwrap();
         assert_eq!(preview.focused_thread_id(), Some("first"));
-        // Its keys are on the side panel's bottom border and in the key bar,
-        // not on the bubble.
+        // Its keys are on the frame's bottom border and in the key bar, not
+        // on the bubble.
+        let bottom = frame_bottom(&buf);
         let (hint_x, hint_y) = find(&buf, "r reply").expect("hint on screen");
-        assert_eq!(hint_y, area.height - 1, "on the bottom border");
+        assert_eq!(hint_y, bottom, "on the frame's bottom border");
         assert!(hint_x > area.width / 2, "under the side panel");
         assert!(layout.get_status_bindings().iter().any(|b| b.key == "r"), "r in the key bar");
 
-        // With a pager under the code, the side panel ends where the steps
-        // panel does so their bottom borders line up.
+        // One frame holds code and comments: no border between them, no
+        // title over the list, the scrollbar at its far right. Below it the
+        // details pane shows its Details tab alone.
+        let top = row(&buf, 0);
+        assert!(top.contains("Steps"), "{top}");
+        assert!(!top.contains("Comments") && !top.contains("Details"), "{top}");
+        assert_eq!(top.matches('╮').count(), 1, "one frame: {top}");
+        let plain = row(&buf, 1);
+        assert_eq!(plain.matches('│').count(), 2, "only the frame's sides: {plain}");
+        let details_top = row(&buf, bottom + 1);
+        assert!(details_top.contains("Details"), "{details_top}");
+        assert!(!details_top.contains("Comments"), "comments are the list: {details_top}");
+
+        // Clicking the border over the list, or under it, focuses the list.
+        let click = |layout: &mut BrowserLayout, column: u16, row: u16| {
+            layout.handle_event(&Event::Mouse(ratatui::crossterm::event::MouseEvent {
+                kind: ratatui::crossterm::event::MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left,
+                ),
+                column,
+                row,
+                modifiers: KeyModifiers::empty(),
+            }));
+        };
+        let x = area.width - 12;
+        for y in [0, bottom] {
+            layout.right_pane.focus_steps();
+            click(&mut layout, x, y);
+            assert_eq!(layout.right_pane.focused, RightPaneFocus::Comments, "row {y}");
+        }
+        // Clicking the details pane focuses it.
+        click(&mut layout, x, bottom + 2);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+
+        // Tab cycles code → comments → details, and back.
+        layout.right_pane.focus_steps();
+        layout.set_focus(FocusArea::Main);
+        for expected in [RightPaneFocus::Comments, RightPaneFocus::Details, RightPaneFocus::Steps] {
+            layout.next_focus();
+            assert_eq!(layout.right_pane.focused, expected);
+        }
+        layout.previous_focus();
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+
+        // `]` from the list switches the frame's tabs; Info hides the list,
+        // which takes focus off it.
+        layout.right_pane.focus_comments();
+        assert!(press(&mut layout, ']'));
+        assert_eq!(layout.right_pane.steps.tabs.selected_index(), right_pane::INFO_TAB_INDEX);
+        assert_eq!(layout.right_pane.details.tabs.selected_index(), 0, "details tab untouched");
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps, "focus follows the list");
+        let buf = render(&layout);
+        assert!(find(&buf, "first body").is_none(), "no list beside Info");
+        layout.right_pane.focus_comments();
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps, "no list to focus");
+
+        // `]` in the details pane has no other tab to switch to.
+        layout.right_pane.focus_details();
+        assert!(press(&mut layout, ']'));
+        assert_eq!(layout.right_pane.details.tabs.selected_index(), 0);
+        layout.right_pane.steps.tabs.set_selected(0);
+        render(&layout);
+
+        // With a pager under it, the frame ends above the pager.
         layout.right_pane.pager_total = 3;
         let buf = render(&layout);
-        let row = |y: u16| -> String { (0..area.width).map(|x| buf[(x, y)].symbol()).collect() };
-        assert_eq!(row(area.height - 2).matches('╯').count(), 2, "{}", row(area.height - 2));
-        assert!(!row(area.height - 1).contains('╯'), "{}", row(area.height - 1));
+        let bottom = frame_bottom(&buf);
+        assert!(!row(&buf, bottom + 1).contains('─'), "pager row: {}", row(&buf, bottom + 1));
         layout.right_pane.pager_total = 0;
+        layout.right_pane.focus_comments();
+        render(&layout);
         assert!(press(&mut layout, 'j'));
         render(&layout);
         let preview = layout.right_pane.steps.get_step_preview().unwrap();
