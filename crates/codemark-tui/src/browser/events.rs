@@ -1391,7 +1391,7 @@ impl BrowserLayout {
             ratatui::crossterm::event::KeyCode::Char('r')
                 if key.modifiers.is_empty()
                     && self.should_handle_keybindings()
-                    && self.code_preview_focused()
+                    && self.comment_thread_focused()
                     && self.open_reply_draft() =>
             {
                 return Some(true);
@@ -1400,7 +1400,7 @@ impl BrowserLayout {
             // in it (`e` is the end-of-word motion there).
             ratatui::crossterm::event::KeyCode::Char('E')
                 if self.should_handle_keybindings()
-                    && self.code_preview_focused()
+                    && self.comment_thread_focused()
                     && self.open_edit_draft() =>
             {
                 return Some(true);
@@ -1409,7 +1409,7 @@ impl BrowserLayout {
             ratatui::crossterm::event::KeyCode::Char('d')
                 if key.modifiers.is_empty()
                     && self.should_handle_keybindings()
-                    && self.code_preview_focused()
+                    && self.comment_thread_focused()
                     && self.confirm_delete_thread() =>
             {
                 return Some(true);
@@ -1929,7 +1929,11 @@ impl BrowserLayout {
     /// Handle +/= or -/_ keys for resizing panes.
     fn handle_resize(&mut self, grow: bool) -> bool {
         if self.focus == FocusArea::Main {
-            if self.right_pane.focused == RightPaneFocus::Details {
+            // Beside the preview, the details pane is part of the preview's
+            // layout, so `+`/`-` keep cycling that layout from either side.
+            if self.right_pane.focused == RightPaneFocus::Details
+                && !self.right_pane_size.details_beside()
+            {
                 // Cycle details pane size (Regular → Half → Full)
                 let old_size = self.details_pane_size;
                 self.details_pane_size = if grow {
@@ -1948,16 +1952,25 @@ impl BrowserLayout {
                 );
             } else {
                 // Cycle the preview pane layout
-                // (Regular → Full → PreviewOnly → Regular).
+                // (Regular → Full → SideComments → PreviewOnly → Regular).
                 let next = if grow {
                     self.right_pane_size.increase()
                 } else {
                     self.right_pane_size.decrease()
                 };
+                // Entering the side-by-side layout shows the comment list.
+                if next.details_beside() && !self.right_pane_size.details_beside() {
+                    self.right_pane.show_comments_tab();
+                }
                 self.right_pane_size = next;
                 // Reset details fullscreen to avoid conflicting states
                 self.details_pane_size = DetailsPaneSize::Regular;
-                if next.is_fullscreen() {
+                // Keep focus on the side panel when it stays visible beside
+                // the preview; otherwise the preview takes it.
+                if next.is_fullscreen()
+                    && !(next.details_beside()
+                        && self.right_pane.focused == RightPaneFocus::Details)
+                {
                     self.right_pane.focus_steps();
                 }
                 tracing::debug!(

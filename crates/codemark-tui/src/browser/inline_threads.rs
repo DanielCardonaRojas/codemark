@@ -2,18 +2,28 @@
 //!
 //! Anchors resolve against the code the preview is showing, scoped to the
 //! bookmark's deepest landmark (see `codemark_core::engine::comment_anchor`).
-//! Only *anchored* threads appear inline: whole-bookmark comments stay in the
-//! Comments tab, and orphaned or suspended ones have nowhere to sit.
+//! Only *anchored* threads appear inline. Whole-bookmark, orphaned and
+//! suspended threads have nowhere to sit in the code: they are listed beside
+//! it in the side-by-side layout, and in the Comments tab otherwise.
 
 use codemark_core::engine::bookmark::{Bookmark, BookmarkComment};
 use codemark_core::engine::comment_anchor::{self, AnchorState};
 
-use crate::component::{InlineComment, InlineThread};
+use crate::component::{InlineComment, InlineThread, LooseThread};
 
-/// Inline threads for `bm`, resolved against `code`.
+/// A bookmark's comment threads: those anchored in the code, and those with
+/// no place in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Threads {
+    pub anchored: Vec<InlineThread>,
+    pub loose: Vec<LooseThread>,
+}
+
+/// Comment threads for `bm`, resolved against `code`.
 ///
 /// `bookmark_lines` is the bookmark's live range (0-indexed, inclusive), or
-/// `None` when it did not resolve, in which case no thread is shown.
+/// `None` when it did not resolve, in which case every anchored comment is
+/// suspended.
 ///
 /// `bookmark_bytes` is its exact byte range when known; otherwise the lines
 /// stand in for it (see [`bookmark_span`]).
@@ -22,36 +32,14 @@ pub(crate) fn build_inline_threads(
     code: &str,
     bookmark_lines: Option<(usize, usize)>,
     bookmark_bytes: Option<(usize, usize)>,
-) -> Vec<InlineThread> {
+) -> Threads {
     let root_of = thread_roots(&bm.comments);
-    let roots: Vec<&BookmarkComment> = bm
-        .comments
-        .iter()
-        .filter(|c| root_of.get(c.id.as_str()) == Some(&c.id.as_str()) && c.is_anchored())
-        .collect();
-    let Some((start, end)) = bookmark_lines else { return Vec::new() };
+    let roots: Vec<&BookmarkComment> =
+        bm.comments.iter().filter(|c| root_of.get(c.id.as_str()) == Some(&c.id.as_str())).collect();
     if roots.is_empty() {
-        return Vec::new();
+        return Threads::default();
     }
-    let Ok(language) = bm.grammar() else { return Vec::new() };
-    let Some(bookmark_range) = bookmark_span(code, (start, end), bookmark_bytes) else {
-        return Vec::new();
-    };
-
-    let anchors: Vec<(Option<&str>, Option<&str>)> =
-        roots.iter().map(|c| (c.query.as_deref(), c.content_hash.as_deref())).collect();
-    let states = match comment_anchor::resolve_comment_anchors_from_source(
-        code,
-        &language,
-        Some(bookmark_range),
-        &anchors,
-    ) {
-        Ok(states) => states,
-        Err(e) => {
-            tracing::debug!(target: "codemark::comments", error = %e, "inline anchors failed to resolve");
-            return Vec::new();
-        }
-    };
+    let states = anchor_states(bm, code, &roots, bookmark_lines, bookmark_bytes);
 
     let now = chrono::Local::now();
     let comment = |c: &BookmarkComment| InlineComment {
@@ -60,25 +48,73 @@ pub(crate) fn build_inline_threads(
         when: relative_time(&c.created_at, now),
         body: c.body.clone(),
     };
-    roots
-        .into_iter()
-        .zip(states)
-        .filter_map(|(root, state)| {
-            let AnchorState::Anchored(range) = state else { return None };
-            // Every descendant, at any depth (imported threads can nest).
-            let replies = bm.comments.iter().filter(|c| {
-                c.id != root.id && root_of.get(c.id.as_str()) == Some(&root.id.as_str())
-            });
-            Some(InlineThread {
-                root_id: root.id.clone(),
-                anchor_start: range.start_line,
-                anchor_end: range.end_line,
-                start_col: char_column(code, range.byte_range.0),
-                end_col: char_column(code, range.byte_range.1),
-                entries: std::iter::once(root).chain(replies).map(comment).collect(),
-            })
-        })
-        .collect()
+    let mut threads = Threads::default();
+    for (root, state) in roots.into_iter().zip(states) {
+        // Every descendant, at any depth (imported threads can nest).
+        let replies = bm
+            .comments
+            .iter()
+            .filter(|c| c.id != root.id && root_of.get(c.id.as_str()) == Some(&root.id.as_str()));
+        let entries = std::iter::once(root).chain(replies).map(comment).collect();
+        let tag = match state {
+            AnchorState::Anchored(range) => {
+                threads.anchored.push(InlineThread {
+                    root_id: root.id.clone(),
+                    anchor_start: range.start_line,
+                    anchor_end: range.end_line,
+                    start_col: char_column(code, range.byte_range.0),
+                    end_col: char_column(code, range.byte_range.1),
+                    entries,
+                });
+                continue;
+            }
+            AnchorState::Bookmark => None,
+            AnchorState::Orphaned => Some("orphaned"),
+            AnchorState::Suspended => Some("suspended"),
+        };
+        threads.loose.push(LooseThread { root_id: root.id.clone(), tag, entries });
+    }
+    threads
+}
+
+/// Where each of `roots` sits in `code`. Comments without a query are about
+/// the whole bookmark; anchored ones are suspended when the bookmark, its
+/// grammar or the anchors can't be resolved.
+fn anchor_states(
+    bm: &Bookmark,
+    code: &str,
+    roots: &[&BookmarkComment],
+    bookmark_lines: Option<(usize, usize)>,
+    bookmark_bytes: Option<(usize, usize)>,
+) -> Vec<AnchorState> {
+    let fallback = || {
+        roots
+            .iter()
+            .map(|c| if c.is_anchored() { AnchorState::Suspended } else { AnchorState::Bookmark })
+            .collect()
+    };
+    if !roots.iter().any(|c| c.is_anchored()) {
+        return fallback();
+    }
+    let Some((start, end)) = bookmark_lines else { return fallback() };
+    let Ok(language) = bm.grammar() else { return fallback() };
+    let Some(bookmark_range) = bookmark_span(code, (start, end), bookmark_bytes) else {
+        return fallback();
+    };
+    let anchors: Vec<(Option<&str>, Option<&str>)> =
+        roots.iter().map(|c| (c.query.as_deref(), c.content_hash.as_deref())).collect();
+    match comment_anchor::resolve_comment_anchors_from_source(
+        code,
+        &language,
+        Some(bookmark_range),
+        &anchors,
+    ) {
+        Ok(states) => states,
+        Err(e) => {
+            tracing::debug!(target: "codemark::comments", error = %e, "inline anchors failed to resolve");
+            fallback()
+        }
+    }
 }
 
 /// Root id of each comment, following `parent_id` within `comments`. A
@@ -284,9 +320,45 @@ mod tests {
             comments: vec![BookmarkComment::new("bm", "claude", "why ping?").with_anchor(anchor)],
         };
 
-        let threads = build_inline_threads(&bm, code, Some((0, 0)), Some(b));
+        let threads = build_inline_threads(&bm, code, Some((0, 0)), Some(b)).anchored;
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].start_col, ping_in_b.0, "anchored in `b`, not `a`");
+    }
+
+    #[test]
+    fn whole_bookmark_comments_are_loose_threads_with_their_replies() {
+        use codemark_core::engine::bookmark::BookmarkHealth;
+        let root = BookmarkComment::new("bm", "dan", "about the whole thing");
+        let mut reply = BookmarkComment::new("bm", "claude", "agreed");
+        reply.parent_id = Some(root.id.clone());
+        let bm = Bookmark {
+            id: "bm".into(),
+            query: "(function_item) @target".into(),
+            language: "rust".into(),
+            grammar_source: None,
+            forked_from: None,
+            branch: None,
+            file_path: "lib.rs".into(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: vec![root.clone(), reply],
+        };
+        let threads = build_inline_threads(&bm, "fn a() {}\n", Some((0, 0)), None);
+        assert!(threads.anchored.is_empty());
+        assert_eq!(threads.loose.len(), 1);
+        assert_eq!(threads.loose[0].root_id, root.id);
+        assert_eq!(threads.loose[0].tag, None, "a whole-bookmark comment has no tag");
+        assert_eq!(threads.loose[0].entries.len(), 2, "the reply comes along");
     }
 
     #[test]

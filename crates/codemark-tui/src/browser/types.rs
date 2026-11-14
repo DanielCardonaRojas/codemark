@@ -232,23 +232,32 @@ pub enum RightPaneSize {
     /// Full window width (100%) - left pane hidden, preview + pagination only
     /// (details pane hidden)
     PreviewOnly,
+    /// Full window width (100%) - left pane hidden, preview + pagination with
+    /// the details pane beside it on the right, its Comments tab listing the
+    /// comment threads level with their code instead of inline
+    SideComments,
 }
 
 impl RightPaneSize {
-    /// Cycle to the next layout (Regular → Full → PreviewOnly → Regular).
+    /// Cycle to the next layout
+    /// (Regular → Full → SideComments → PreviewOnly → Regular): the details
+    /// pane goes from below the preview, to beside it, to hidden.
     pub fn increase(self) -> Self {
         match self {
             Self::Regular => Self::Full,
-            Self::Full => Self::PreviewOnly,
+            Self::Full => Self::SideComments,
+            Self::SideComments => Self::PreviewOnly,
             Self::PreviewOnly => Self::Regular,
         }
     }
 
-    /// Cycle to the previous layout (Regular → PreviewOnly → Full → Regular).
+    /// Cycle to the previous layout
+    /// (Regular → PreviewOnly → SideComments → Full → Regular).
     pub fn decrease(self) -> Self {
         match self {
             Self::Regular => Self::PreviewOnly,
-            Self::PreviewOnly => Self::Full,
+            Self::PreviewOnly => Self::SideComments,
+            Self::SideComments => Self::Full,
             Self::Full => Self::Regular,
         }
     }
@@ -256,12 +265,17 @@ impl RightPaneSize {
     /// Check if the right pane should override the default layout.
     /// When true, the right pane takes full width regardless of left pane size.
     pub fn is_fullscreen(self) -> bool {
-        matches!(self, Self::Full | Self::PreviewOnly)
+        matches!(self, Self::Full | Self::PreviewOnly | Self::SideComments)
     }
 
     /// Check if the details pane should be hidden (preview + pagination only).
     pub fn hides_details(self) -> bool {
         matches!(self, Self::PreviewOnly)
+    }
+
+    /// Check if the details pane sits beside the preview rather than below.
+    pub fn details_beside(self) -> bool {
+        matches!(self, Self::SideComments)
     }
 }
 
@@ -351,14 +365,16 @@ mod tests {
     #[test]
     fn test_right_pane_size_increase() {
         assert_eq!(RightPaneSize::Regular.increase(), RightPaneSize::Full);
-        assert_eq!(RightPaneSize::Full.increase(), RightPaneSize::PreviewOnly);
+        assert_eq!(RightPaneSize::Full.increase(), RightPaneSize::SideComments);
+        assert_eq!(RightPaneSize::SideComments.increase(), RightPaneSize::PreviewOnly);
         assert_eq!(RightPaneSize::PreviewOnly.increase(), RightPaneSize::Regular);
     }
 
     #[test]
     fn test_right_pane_size_decrease() {
         assert_eq!(RightPaneSize::Regular.decrease(), RightPaneSize::PreviewOnly);
-        assert_eq!(RightPaneSize::PreviewOnly.decrease(), RightPaneSize::Full);
+        assert_eq!(RightPaneSize::PreviewOnly.decrease(), RightPaneSize::SideComments);
+        assert_eq!(RightPaneSize::SideComments.decrease(), RightPaneSize::Full);
         assert_eq!(RightPaneSize::Full.decrease(), RightPaneSize::Regular);
     }
 
@@ -367,6 +383,7 @@ mod tests {
         assert!(!RightPaneSize::Regular.is_fullscreen());
         assert!(RightPaneSize::Full.is_fullscreen());
         assert!(RightPaneSize::PreviewOnly.is_fullscreen());
+        assert!(RightPaneSize::SideComments.is_fullscreen());
     }
 
     #[test]
@@ -374,6 +391,9 @@ mod tests {
         assert!(!RightPaneSize::Regular.hides_details());
         assert!(!RightPaneSize::Full.hides_details());
         assert!(RightPaneSize::PreviewOnly.hides_details());
+        assert!(!RightPaneSize::SideComments.hides_details());
+        assert!(RightPaneSize::SideComments.details_beside());
+        assert!(!RightPaneSize::Full.details_beside());
     }
 
     #[test]
