@@ -170,6 +170,18 @@ struct InlineState {
     /// Screen rows `(first, last)` of each anchored bubble drawn in the side
     /// panel last frame, with its thread index, for mouse hit-testing.
     rail_hits: RefCell<Vec<(u16, u16, usize)>>,
+    /// Width of the side panel last frame; `0` before it is first drawn.
+    /// Bubbles wrap to it, which sets how far the list reaches.
+    rail_width: Cell<u16>,
+}
+
+/// One bubble of the side panel's list.
+struct RailItem {
+    /// Index into the anchored threads; `None` for a loose thread.
+    thread: Option<usize>,
+    /// Row it wants to start on: its node's first code row (0 when loose).
+    desired: usize,
+    lines: Vec<BubbleLine>,
 }
 
 impl CodePreview {
@@ -457,7 +469,7 @@ impl CodePreview {
     /// focus stays on another pane.
     pub fn scroll_by(&mut self, delta: i32) -> bool {
         let height = self.last_area.get().height as usize;
-        let max_offset = self.total_rows().saturating_sub(height) as i32;
+        let max_offset = self.scroll_rows().saturating_sub(height) as i32;
         let old_offset = self.scroll_offset.get();
         self.scroll_offset
             .set((self.scroll_offset.get() as i32 + delta).clamp(0, max_offset) as u16);
@@ -634,7 +646,7 @@ impl CodePreview {
                     ) if is_hovered => self.click_row(mouse.row),
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
                         let height = area.height as usize;
-                        let total_rows = self.total_rows();
+                        let total_rows = self.scroll_rows();
                         if total_rows > height {
                             let old_offset = self.scroll_offset.get();
                             self.scroll_offset.set(
@@ -805,7 +817,7 @@ impl CodePreview {
         if height == 0 {
             return;
         }
-        let max_offset = self.total_rows().saturating_sub(height) as i64;
+        let max_offset = self.scroll_rows().saturating_sub(height) as i64;
         self.scroll_offset
             .set((self.row_of(anchor) as i64 - screen_row).clamp(0, max_offset) as u16);
         tracing::debug!(target: "codemark::comments", beside, "comment threads moved");
@@ -879,7 +891,76 @@ impl CodePreview {
     /// the content (see the note in `render`).
     fn visible_offset(&self) -> usize {
         let height = self.last_area.get().height as usize;
-        (self.scroll_offset.get() as usize).min(self.total_rows().saturating_sub(height))
+        (self.scroll_offset.get() as usize).min(self.scroll_rows().saturating_sub(height))
+    }
+
+    /// Anchored threads in the side panel's order: by their node's first
+    /// line, then its last.
+    fn rail_order(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.inline.threads.len()).collect();
+        order.sort_by_key(|&i| {
+            let t = &self.inline.threads[i];
+            (t.anchor_start, t.anchor_end)
+        });
+        order
+    }
+
+    /// The side panel's bubbles in list order (loose threads first), wrapped
+    /// to its last width, and the row each starts on.
+    fn rail_items(&self) -> (Vec<RailItem>, Vec<usize>) {
+        let text_width =
+            (self.inline.rail_width.get() as usize).saturating_sub(BUBBLE_CHROME).max(1);
+        let mut items: Vec<RailItem> = self
+            .inline
+            .loose
+            .iter()
+            .map(|t| RailItem {
+                thread: None,
+                desired: 0,
+                lines: bubble_lines(&t.entries, t.tag, text_width),
+            })
+            .collect();
+        let layout = self.layout();
+        items.extend(self.rail_order().into_iter().map(|i| {
+            let t = &self.inline.threads[i];
+            let lines = if self.inline.folded.contains(&t.root_id) {
+                folded_bubble_lines(&t.entries, None, text_width)
+            } else {
+                bubble_lines(&t.entries, None, text_width)
+            };
+            RailItem { thread: Some(i), desired: layout.row_of(t.anchor_start), lines }
+        }));
+        drop(layout);
+        let desired: Vec<usize> = items.iter().map(|i| i.desired).collect();
+        let heights: Vec<usize> = items.iter().map(|i| i.lines.len()).collect();
+        let starts = stack_rail(&desired, &heights);
+        (items, starts)
+    }
+
+    /// Rows the preview can scroll through. Beside the code that is enough to
+    /// bring the side panel's last bubble fully on screen, even past the end
+    /// of the file; inline it is the display rows.
+    fn scroll_rows(&self) -> usize {
+        let rows = self.total_rows();
+        if !self.inline.beside.get() || self.inline.rail_width.get() == 0 {
+            return rows;
+        }
+        let (items, starts) = self.rail_items();
+        let rail_end =
+            items.iter().zip(&starts).map(|(item, start)| start + item.lines.len()).max();
+        rows.max(rail_end.unwrap_or(0))
+    }
+
+    /// Rows of the picked thread's bubble beside the code, counted like code
+    /// rows: it lines up with its node, so it covers the rows from there.
+    fn picked_rail_rows(&self) -> Option<(usize, usize)> {
+        if !self.inline.beside.get() || self.inline.rail_width.get() == 0 {
+            return None;
+        }
+        let picked = self.cursor_thread()?;
+        let (items, _) = self.rail_items();
+        let item = items.iter().find(|item| item.thread == Some(picked))?;
+        Some((item.desired, item.desired + item.lines.len().saturating_sub(1)))
     }
 
     /// Draw the threads as a list of bubbles in `area`, beside the preview.
@@ -909,47 +990,12 @@ impl CodePreview {
         }
 
         let width = area.width as usize;
-        let text_width = width.saturating_sub(BUBBLE_CHROME).max(1);
         let code_area = self.last_area.get();
-        let offset = self.visible_offset();
-        let layout = self.layout();
         let focused = self.focused_thread();
 
-        // (anchored thread index, desired row, bubble rows), in list order.
-        struct Item {
-            thread: Option<usize>,
-            desired: usize,
-            lines: Vec<BubbleLine>,
-        }
-        let mut items: Vec<Item> = self
-            .inline
-            .loose
-            .iter()
-            .map(|t| Item {
-                thread: None,
-                desired: 0,
-                lines: bubble_lines(&t.entries, t.tag, text_width),
-            })
-            .collect();
-        let mut anchored: Vec<usize> = (0..self.inline.threads.len()).collect();
-        anchored.sort_by_key(|&i| {
-            let t = &self.inline.threads[i];
-            (t.anchor_start, t.anchor_end)
-        });
-        items.extend(anchored.into_iter().map(|i| {
-            let t = &self.inline.threads[i];
-            let lines = if self.inline.folded.contains(&t.root_id) {
-                folded_bubble_lines(&t.entries, None, text_width)
-            } else {
-                bubble_lines(&t.entries, None, text_width)
-            };
-            Item { thread: Some(i), desired: layout.row_of(t.anchor_start), lines }
-        }));
-        drop(layout);
-
-        let desired: Vec<usize> = items.iter().map(|i| i.desired).collect();
-        let heights: Vec<usize> = items.iter().map(|i| i.lines.len()).collect();
-        let starts = stack_rail(&desired, &heights);
+        self.inline.rail_width.set(area.width);
+        let offset = self.visible_offset();
+        let (items, starts) = self.rail_items();
         // How far the picked bubble was pushed below its code: shift the whole
         // list up by that much so it lines up.
         let shift = items
@@ -1169,6 +1215,9 @@ impl CodePreview {
 
     /// Display rows the cursor covers: its bubble, or its code line.
     fn cursor_rows(&self) -> Option<(usize, usize)> {
+        if let Some(rows) = self.picked_rail_rows() {
+            return Some(rows);
+        }
         if let Some(t) = self.cursor_thread()
             && let Some(rows) = self.layout().bubble_rows(t)
         {
@@ -1203,20 +1252,31 @@ impl CodePreview {
         if count == 0 {
             return false;
         }
+        let beside = self.inline.beside.get();
+        // The order threads are shown in: the side panel's beside the code,
+        // display order inline.
+        let order: Vec<usize> = if beside { self.rail_order() } else { (0..count).collect() };
+        // The line each thread is reached at, in the same terms as `line`.
+        let reach = |t: &InlineThread| if beside { t.anchor_start } else { self.thread_line(t) };
         let line = self.selected_line.unwrap_or(0);
-        let target = match (self.cursor_thread(), forward) {
-            (Some(t), true) => (t + 1) % count,
-            (Some(t), false) => (t + count - 1) % count,
-            (None, true) => {
-                (0..count).find(|&i| self.thread_line(&self.inline.threads[i]) >= line).unwrap_or(0)
+        let position = match (self.cursor_thread(), forward) {
+            (Some(t), forward) => {
+                let at = order.iter().position(|&i| i == t).unwrap_or(0);
+                if forward { (at + 1) % count } else { (at + count - 1) % count }
             }
-            (None, false) => (0..count)
-                .rev()
-                .find(|&i| self.thread_line(&self.inline.threads[i]) < line)
+            (None, true) => {
+                order.iter().position(|&i| reach(&self.inline.threads[i]) >= line).unwrap_or(0)
+            }
+            (None, false) => order
+                .iter()
+                .rposition(|&i| reach(&self.inline.threads[i]) < line)
                 .unwrap_or(count - 1),
         };
+        let target = order[position];
         let id = self.inline.threads[target].root_id.clone();
-        if self.inline.folded.remove(&id) {
+        // Inline a folded bubble is unfolded so it can be read; beside the
+        // code a folded thread still shows its root, so the fold stays.
+        if !beside && self.inline.folded.remove(&id) {
             self.invalidate_layout();
         }
         let thread = &self.inline.threads[target];
@@ -1265,7 +1325,7 @@ impl CodePreview {
         let area = self.last_area.get();
         let height = area.height as usize;
         let offset =
-            (self.scroll_offset.get() as usize).min(self.total_rows().saturating_sub(height));
+            (self.scroll_offset.get() as usize).min(self.scroll_rows().saturating_sub(height));
         self.scroll_offset.set(offset as u16);
         let row = offset + y.saturating_sub(area.y) as usize;
         let Some(&display_row) = self.layout().rows.get(row) else { return false };
@@ -1301,7 +1361,7 @@ impl CodePreview {
             // No frame yet, so no screen position to keep.
             return;
         }
-        let max_offset = self.total_rows().saturating_sub(height) as i64;
+        let max_offset = self.scroll_rows().saturating_sub(height) as i64;
         self.scroll_offset
             .set((self.row_of(anchor) as i64 - screen_row).clamp(0, max_offset) as u16);
     }
@@ -1406,7 +1466,9 @@ impl Component for CodePreview {
         let selected_range = self.selected_range;
         let height = code_area.height as usize;
         let layout = self.layout();
-        let list_len = layout.total_rows();
+        // Beside the code the view can scroll past the file's end to show the
+        // whole comment list.
+        let list_len = self.scroll_rows();
         let palette = crate::theme::palette();
         let focused_thread = self.focused_thread();
         let gutter = self.gutter_width() as usize;
@@ -2776,5 +2838,67 @@ mod tests {
         assert!(preview.handle_event(&key(KeyCode::Char('n'))));
         assert_eq!(preview.focused_thread_id(), Some("b"));
         assert!(!preview.handle_event(&key(KeyCode::Char('z'))));
+    }
+
+    #[test]
+    fn a_comment_on_the_last_line_can_be_scrolled_fully_into_view() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        preview.set_focus(true);
+        let long: Vec<String> = (0..6).map(|i| format!("paragraph {i}")).collect();
+        preview.set_threads(vec![thread("end", 9, 9, &[&long.join("\n")])]);
+        render_beside(&preview, 30, 44, 8);
+        // Picking it scrolls past the end of the file to show it whole.
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        let buf = render_beside(&preview, 30, 44, 8);
+        let rail: Vec<String> = (0..8).map(|y| row_from(&buf, 30, y)).collect();
+        assert!(rail.iter().any(|r| r.contains("┌ claude")), "{rail:#?}");
+        assert!(rail.iter().any(|r| r.contains("paragraph 5")), "{rail:#?}");
+        assert!(rail.iter().any(|r| r.contains('└')), "{rail:#?}");
+    }
+
+    #[test]
+    fn a_bubble_taller_than_the_view_scrolls_with_the_code() {
+        let mut preview = CodePreview::new(numbered_code(4), "txt");
+        let long: Vec<String> = (0..12).map(|i| format!("paragraph {i}")).collect();
+        preview.set_threads(vec![thread("tall", 1, 1, &[&long.join("\n")])]);
+        render_beside(&preview, 30, 44, 6);
+        // Scrolling as far as it goes reaches the bubble's bottom border.
+        while preview.scroll_by(1) {}
+        let buf = render_beside(&preview, 30, 44, 6);
+        let rail: Vec<String> = (0..6).map(|y| row_from(&buf, 30, y)).collect();
+        assert!(rail.iter().any(|r| r.contains("paragraph 11")), "{rail:#?}");
+        assert!(rail.last().unwrap().contains('└'), "{rail:#?}");
+    }
+
+    #[test]
+    fn picking_threads_beside_the_code_keeps_their_folds() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_focus(true);
+        preview.set_threads(vec![
+            thread("a", 1, 1, &["one", "reply"]),
+            thread("b", 6, 6, &["two", "reply"]),
+        ]);
+        render_beside(&preview, 30, 44, 14);
+        assert!(preview.handle_event(&key(KeyCode::Char('Z'))));
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert_eq!(preview.focused_thread_id(), Some("b"));
+        assert_eq!(preview.inline.folded.len(), 2, "both threads stay folded");
+    }
+
+    #[test]
+    fn picking_beside_the_code_follows_the_side_list_order() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_focus(true);
+        // Stored by last line (inner first), listed by first line (outer first).
+        preview.set_threads(vec![thread("outer", 1, 8, &["fn"]), thread("inner", 3, 3, &["call"])]);
+        render_beside(&preview, 30, 44, 14);
+        preview.selected_line = Some(0);
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert_eq!(preview.focused_thread_id(), Some("outer"));
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert_eq!(preview.focused_thread_id(), Some("inner"));
+        assert!(preview.handle_event(&key(KeyCode::Char('N'))));
+        assert_eq!(preview.focused_thread_id(), Some("outer"));
     }
 }
