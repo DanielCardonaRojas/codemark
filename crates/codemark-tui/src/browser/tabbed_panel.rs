@@ -828,6 +828,27 @@ impl TabbedPanel {
     /// [`Self::render_frame`], with the border drawn as focused when
     /// `focused`: for a frame shared with another panel that may hold focus.
     pub fn render_frame_as(&self, area: Rect, buf: &mut Buffer, focused: bool) -> Rect {
+        self.render_frame_with(area, buf, focused, &self.tabs)
+    }
+
+    /// Render only tab `index`: its title alone on the frame, its content
+    /// inside. The panel's other tabs can't be switched to from here.
+    pub fn render_single_tab(&self, area: Rect, buf: &mut Buffer, index: usize) {
+        self.tabs.forget_positions();
+        let inner = self.render_frame_with(area, buf, self.focused, &self.tabs.only(index));
+        if let Some(panel) = self.panels.get(index) {
+            panel.render(inner, buf);
+        }
+    }
+
+    /// The frame for `tabs`, which are this panel's or a subset of them.
+    fn render_frame_with(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        tabs: &TabSelection,
+    ) -> Rect {
         self.last_area.set(area);
 
         // For multi-select list panels, surface the number of active (selected)
@@ -851,7 +872,7 @@ impl TabbedPanel {
             .iter()
             .map(|panel| matches!(panel, TabContent::List(p) if p.is_filtered()))
             .collect();
-        let mut tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
+        let mut tab_titles = tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
 
         // The active tab's sort glyph (if that tab's list has sorting enabled),
         // drawn just left of the pane-number badge.

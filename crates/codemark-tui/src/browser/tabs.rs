@@ -699,6 +699,18 @@ impl TabSelection {
         self.focused = focused;
     }
 
+    /// A selection holding only tab `index`, selected; for drawing one tab of
+    /// a panel on its own.
+    pub fn only(&self, index: usize) -> Self {
+        Self::new(self.tabs.get(index).cloned().into_iter().collect())
+    }
+
+    /// Forget where tabs were last drawn, so clicks can't switch to a tab
+    /// that isn't on screen.
+    pub fn forget_positions(&self) {
+        self.last_tab_positions.borrow_mut().clear();
+    }
+
     /// Handle a mouse click at the given x position (relative to the panel's left edge).
     /// Returns true if a tab was clicked.
     pub fn handle_click(&mut self, x: u16, _y: u16) -> bool {

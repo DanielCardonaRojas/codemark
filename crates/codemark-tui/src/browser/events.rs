@@ -1960,7 +1960,7 @@ impl BrowserLayout {
                 };
                 // Entering the side-by-side layout shows the comment list.
                 if next.details_beside() && !self.right_pane_size.details_beside() {
-                    self.right_pane.show_comments_tab();
+                    self.right_pane.show_details_tab();
                 }
                 self.right_pane_size = next;
                 // Reset details fullscreen to avoid conflicting states
