@@ -17,6 +17,7 @@ use codemark_core::engine::comment_anchor::{self, CommentAnchor};
 
 use super::BrowserLayout;
 use super::inline_threads::{bookmark_span, trimmed_line_span};
+use super::text_area::TextArea;
 
 /// What saving the draft will create.
 #[derive(Debug, Clone)]
@@ -33,7 +34,7 @@ pub(crate) struct CommentDraft {
     bookmark_id: String,
     repo_root: Option<String>,
     kind: DraftKind,
-    body: String,
+    body: TextArea,
 }
 
 impl CommentDraft {
@@ -111,7 +112,7 @@ impl BrowserLayout {
                     bookmark_id: bookmark.id,
                     repo_root: self.right_pane.active_repo_root.clone(),
                     kind: DraftKind::Anchored(anchor),
-                    body: String::new(),
+                    body: TextArea::default(),
                 });
             }
             Err(e) => self.notify(false, e.to_string()),
@@ -131,7 +132,7 @@ impl BrowserLayout {
             bookmark_id,
             repo_root: self.right_pane.active_repo_root.clone(),
             kind: DraftKind::Reply { root_id },
-            body: String::new(),
+            body: TextArea::default(),
         });
         true
     }
@@ -196,8 +197,9 @@ impl BrowserLayout {
         }
     }
 
-    /// Keys while the draft is open: type, Enter for a new line, Ctrl+S to
-    /// save, Esc to cancel. Always handled (the modal swallows input).
+    /// Keys while the draft is open: type, Enter for a new line, arrows /
+    /// Home / End to move the cursor, Ctrl+S to save, Esc to cancel. Always
+    /// handled (the modal swallows input).
     pub(super) fn handle_comment_draft_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
         let Some(draft) = self.comment_draft.as_mut() else { return };
@@ -206,14 +208,9 @@ impl BrowserLayout {
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_comment_draft()
             }
-            KeyCode::Enter => draft.body.push('\n'),
-            KeyCode::Backspace => {
-                draft.body.pop();
+            _ => {
+                draft.body.handle_key(key);
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                draft.body.push(c)
-            }
-            _ => {}
         }
     }
 
@@ -222,7 +219,7 @@ impl BrowserLayout {
     /// with the text intact so nothing typed is lost.
     fn save_comment_draft(&mut self) {
         let Some(draft) = self.comment_draft.as_ref() else { return };
-        let body = draft.body.trim().to_string();
+        let body = draft.body.text().trim().to_string();
         if body.is_empty() {
             return;
         }
@@ -251,7 +248,7 @@ impl BrowserLayout {
     /// Bracketed paste while the draft is open goes into its body.
     pub(super) fn paste_into_comment_draft(&mut self, text: &str) -> bool {
         let Some(draft) = self.comment_draft.as_mut() else { return false };
-        draft.body.push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+        draft.body.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
         true
     }
 
@@ -279,25 +276,87 @@ impl BrowserLayout {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        let mut lines = vec![
-            Line::from(Span::styled(draft.context(), Style::default().fg(palette.dim))),
-            Line::default(),
-        ];
-        let body_lines: Vec<&str> = draft.body.split('\n').collect();
-        let last = body_lines.len() - 1;
-        for (i, text) in body_lines.into_iter().enumerate() {
-            let mut spans =
-                vec![Span::styled(text.to_string(), Style::default().fg(palette.emphasis))];
-            if i == last {
-                spans.push(Span::styled("▏", Style::default().fg(palette.accent)));
+        // The body is wrapped here, by display width, rather than by
+        // `Paragraph::wrap`, so the cursor's row is known exactly and the
+        // caret cell past a full line's end isn't dropped at the wrap.
+        let width = inner.width as usize;
+        let header = Paragraph::new(Line::from(Span::styled(
+            draft.context(),
+            Style::default().fg(palette.dim),
+        )))
+        .wrap(Wrap { trim: false });
+        let header_rows = (header.line_count(inner.width) + 1).min(inner.height as usize);
+        header.render(Rect { height: header_rows as u16, ..inner }, buf);
+        let body_area = Rect {
+            y: inner.y + header_rows as u16,
+            height: inner.height - header_rows as u16,
+            ..inner
+        };
+
+        let text_style = Style::default().fg(palette.emphasis);
+        let (cursor_line, cursor_col) = draft.body.cursor_line_col();
+        let mut rows = Vec::new();
+        let mut cursor_row = 0;
+        for (i, text) in draft.body.text().split('\n').enumerate() {
+            let cursor = (i == cursor_line).then_some(cursor_col);
+            if let Some(row) = wrap_draft_line(text, cursor, width, text_style, &mut rows) {
+                cursor_row = row;
             }
-            lines.push(Line::from(spans));
         }
-        // Keep the end of a long draft (where the cursor is) in view.
-        let wrapped = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
-        let overflow = wrapped.line_count(inner.width).saturating_sub(inner.height as usize);
-        wrapped.scroll((overflow as u16, 0)).render(inner, buf);
+        // Scroll just enough to keep the cursor's row in view.
+        let scroll = (cursor_row + 1).saturating_sub(body_area.height as usize);
+        Paragraph::new(rows).scroll((scroll as u16, 0)).render(body_area, buf);
     }
+}
+
+/// Append `text`'s rows, wrapped at `width` display columns, to `rows`. With
+/// `cursor` (a grapheme column), the grapheme there is drawn reversed as the
+/// caret (a reversed space past the end, which gets its own cell like any
+/// other), and the caret's index in `rows` is returned. Wrapping goes by whole
+/// grapheme clusters, so joined emoji and accented letters stay together.
+fn wrap_draft_line(
+    text: &str,
+    cursor: Option<usize>,
+    width: usize,
+    style: Style,
+    rows: &mut Vec<Line<'static>>,
+) -> Option<usize> {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let width = width.max(1);
+    let mut graphemes: Vec<&str> = text.graphemes(true).collect();
+    if cursor == Some(graphemes.len()) {
+        graphemes.push(" ");
+    }
+    let caret = style.add_modifier(Modifier::REVERSED);
+    let mut cursor_row = None;
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut used = 0;
+    let flush = |run: &mut String, spans: &mut Vec<Span<'static>>| {
+        if !run.is_empty() {
+            spans.push(Span::styled(std::mem::take(run), style));
+        }
+    };
+    for (i, g) in graphemes.into_iter().enumerate() {
+        let w = g.width();
+        if used + w > width && used > 0 {
+            flush(&mut run, &mut spans);
+            rows.push(Line::from(std::mem::take(&mut spans)));
+            used = 0;
+        }
+        if cursor == Some(i) {
+            flush(&mut run, &mut spans);
+            spans.push(Span::styled(g.to_string(), caret));
+            cursor_row = Some(rows.len());
+        } else {
+            run.push_str(g);
+        }
+        used += w;
+    }
+    flush(&mut run, &mut spans);
+    rows.push(Line::from(spans));
+    cursor_row
 }
 
 /// The first line of `body`, cut to `max` chars with an ellipsis.
@@ -389,7 +448,7 @@ mod tests {
             bookmark_id: "missing-bookmark".into(),
             repo_root: None,
             kind: DraftKind::Reply { root_id: "missing-root".into() },
-            body: "typed ".into(),
+            body: TextArea::new("typed "),
         });
         (layout, dir)
     }
@@ -398,7 +457,71 @@ mod tests {
     fn pasted_text_goes_into_the_draft() {
         let (mut layout, _dir) = layout_with_draft();
         layout.handle_event(&crate::event::Event::Paste("pasted\r\nlines".into()));
-        assert_eq!(layout.comment_draft.as_ref().unwrap().body, "typed pasted\nlines");
+        assert_eq!(layout.comment_draft.as_ref().unwrap().body.text(), "typed pasted\nlines");
+    }
+
+    #[test]
+    fn arrows_move_the_cursor_and_typing_inserts_there() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut layout, _dir) = layout_with_draft();
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        // "typed " → cursor after "typ"
+        for _ in 0..3 {
+            layout.handle_event(&key(KeyCode::Left));
+        }
+        layout.handle_event(&key(KeyCode::Char('X')));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().body.text(), "typXed ");
+
+        // The caret is drawn on the char after the cursor, mid-line.
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        layout.render_comment_draft(area, &mut buf);
+        let cell = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .find(|&(x, y)| buf[(x, y)].modifier.contains(Modifier::REVERSED))
+            .expect("a caret cell");
+        assert_eq!(buf[cell].symbol(), "e");
+    }
+
+    fn caret_rows(text: &str, cursor: usize, width: usize) -> (Vec<String>, Option<usize>) {
+        let mut rows = Vec::new();
+        let row = wrap_draft_line(text, Some(cursor), width, Style::default(), &mut rows);
+        (rows.iter().map(|l| l.to_string()).collect(), row)
+    }
+
+    #[test]
+    fn wrapping_tracks_the_caret_row() {
+        assert_eq!(caret_rows("abcdef", 4, 3), (vec!["abc".into(), "def".into()], Some(1)));
+        // A full line with the cursor at its end puts the caret on a new row.
+        assert_eq!(caret_rows("abc", 3, 3), (vec!["abc".into(), " ".into()], Some(1)));
+        assert_eq!(caret_rows("", 0, 3), (vec![" ".into()], Some(0)));
+        // Wide chars take two cells: 3 per 6-wide row.
+        let (rows, row) = caret_rows(&"界".repeat(7), 6, 6);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(row, Some(2));
+        // A joined emoji (two cells) stays whole on the next row.
+        let (rows, _) = caret_rows("abcd👩‍💻", 0, 5);
+        assert_eq!(rows, vec!["abcd".to_string(), "👩‍💻".to_string()]);
+        // The caret on an accented letter covers the whole cluster.
+        let mut rows = Vec::new();
+        wrap_draft_line("e\u{301}x", Some(0), 10, Style::default(), &mut rows);
+        let caret =
+            rows[0].spans.iter().find(|s| s.style.add_modifier.contains(Modifier::REVERSED));
+        assert_eq!(caret.map(|s| s.content.as_ref()), Some("e\u{301}"));
+    }
+
+    #[test]
+    fn a_long_draft_scrolls_to_keep_the_caret_visible() {
+        let (mut layout, _dir) = layout_with_draft();
+        layout.comment_draft.as_mut().unwrap().body = TextArea::new("界".repeat(200));
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        layout.render_comment_draft(area, &mut buf);
+        let caret = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .find(|&(x, y)| buf[(x, y)].modifier.contains(Modifier::REVERSED));
+        assert!(caret.is_some(), "the caret is on screen");
     }
 
     #[test]
@@ -407,7 +530,7 @@ mod tests {
         let (mut layout, _dir) = layout_with_draft();
         layout.save_comment_draft();
         let draft = layout.comment_draft.as_ref().expect("draft survives a failed save");
-        assert_eq!(draft.body, "typed ");
+        assert_eq!(draft.body.text(), "typed ");
         assert!(layout.pending_notification.as_ref().is_some_and(|n| !n.success));
     }
 

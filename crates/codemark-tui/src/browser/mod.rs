@@ -15,6 +15,7 @@ mod right_pane;
 mod search;
 mod tabbed_panel;
 mod tabs;
+mod text_area;
 mod transfer;
 mod types;
 mod workspace;
