@@ -822,6 +822,12 @@ impl TabbedPanel {
     /// Render the border, inline tab titles and badges; returns the inner
     /// area for the active tab's content.
     fn render_frame(&self, area: Rect, buf: &mut Buffer) -> Rect {
+        self.render_frame_as(area, buf, self.focused)
+    }
+
+    /// [`Self::render_frame`], with the border drawn as focused when
+    /// `focused`: for a frame shared with another panel that may hold focus.
+    pub fn render_frame_as(&self, area: Rect, buf: &mut Buffer, focused: bool) -> Rect {
         self.last_area.set(area);
 
         // For multi-select list panels, surface the number of active (selected)
@@ -870,7 +876,7 @@ impl TabbedPanel {
 
         // Render outer border for the entire panel area with inline tabs
         let border_color =
-            if self.focused { crate::theme::palette().accent } else { crate::theme::palette().dim };
+            if focused { crate::theme::palette().accent } else { crate::theme::palette().dim };
         let border_style = Style::default().fg(border_color);
 
         let block = ratatui::widgets::Block::bordered()

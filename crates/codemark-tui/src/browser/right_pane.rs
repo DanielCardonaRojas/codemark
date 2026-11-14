@@ -1656,61 +1656,59 @@ impl RightPane {
         }
     }
 
-    /// The side-by-side layout: the preview and pager on the left, the details
-    /// pane on the right at full height.
+    /// The side-by-side layout: one frame around the code and, on its right,
+    /// its comment list, so they read as a single viewport scrolling
+    /// together. The list only accompanies the code: with the Info or Query
+    /// tab the content takes the whole frame. The pager sits under it.
     fn render_side_by_side(&self, area: Rect, buf: &mut Buffer) {
-        // Wide enough for a readable bubble, never more than half the pane.
-        let side_width = (area.width * 2 / 5).clamp(30, 72).min(area.width / 2);
-        let columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(side_width)])
-            .split(area);
         let pager_height = if self.pager_total > 1 { 1 } else { 0 };
-        let left = Layout::default()
+        let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(pager_height)])
-            .split(columns[0]);
-
-        // As tall as the steps panel beside it, so the borders line up; the
-        // pager row under the steps stays empty on this side.
-        let side = Rect { height: left[0].height, ..columns[1] };
-        let list = self
-            .rail_preview()
-            .filter(|_| self.details.tabs.selected_index() == COMMENTS_TAB_INDEX);
-        // The list's width sets the preview's scroll range, so give it before
-        // the preview draws; without the list there is no extra range.
-        if let Some(preview) = self.steps.get_step_preview() {
-            let inner_width = if list.is_some() { side.width.saturating_sub(2) } else { 0 };
-            preview.set_rail_width(inner_width);
-        }
-
-        self.steps.health_label.set(self.preview_health());
-        self.render_steps_or_loading(left[0], buf);
+            .split(area);
+        let frame = rows[0];
         if self.pager_total > 1 {
             use crate::component::Pager;
             let health = self.steps_data.iter().map(|step| step.health).collect();
             let pager = Pager::new(self.pager_total, self.pager_current).with_health(health);
-            pager.render(left[1], buf);
+            pager.render(rows[1], buf);
+        }
+        // The details pane has no place here; the list is drawn directly.
+        self.details.invalidate_area();
+        let Some(preview) = self.rail_preview() else {
+            if let Some(preview) = self.steps.get_step_preview() {
+                preview.invalidate_rail();
+            }
+            self.last_details_area.set(Rect::default());
+            self.render_steps_or_loading(frame, buf);
+            return;
+        };
+
+        let inner = Block::bordered().inner(frame);
+        // Wide enough for a readable bubble, never more than half the view.
+        let side_width = (inner.width * 2 / 5).clamp(30, 72).min(inner.width / 2);
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(side_width)])
+            .split(inner);
+        let (code, rail) = (columns[0], columns[1]);
+        // The list's width sets the preview's scroll range, so give it before
+        // the preview draws.
+        preview.set_rail_width(rail.width);
+
+        // One frame for both: focused when either side has focus.
+        let focused = self.steps.focused || self.details.focused;
+        self.steps.health_label.set(self.preview_health());
+        self.steps.render_frame_as(frame, buf, focused);
+        if let Some(panel) = self.steps.panels.get(self.steps.tabs.selected_index()) {
+            panel.render(code, buf);
         }
 
-        // The steps panel drew the preview just now, so the list lines up
-        // with the code as it is on screen.
-        self.last_details_area.set(side);
-        match list {
-            Some(preview) => {
-                self.details.render_with_body(side, buf, |inner, buf| {
-                    preview.render_rail(inner, buf);
-                });
-                if let Some(hint) = preview.picked_thread_hint() {
-                    render_border_hint(side, buf, &hint);
-                }
-            }
-            _ => {
-                if let Some(preview) = self.steps.get_step_preview() {
-                    preview.invalidate_rail();
-                }
-                self.details.render(side, buf);
-            }
+        // The preview drew its code just now, so the list lines up with it.
+        self.last_details_area.set(rail);
+        preview.render_rail(rail, buf);
+        if let Some(hint) = preview.picked_thread_hint() {
+            render_border_hint(frame, buf, &hint);
         }
     }
 
@@ -1742,7 +1740,6 @@ impl RightPane {
         self.side_comments.get()
             && self.focused == RightPaneFocus::Details
             && self.details.focused
-            && self.details.tabs.selected_index() == COMMENTS_TAB_INDEX
             && self.rail_preview().is_some()
     }
 
@@ -1751,10 +1748,7 @@ impl RightPane {
     /// the bubble under it. Returns whether the event was used.
     fn handle_rail_event(&mut self, event: &Event) -> bool {
         use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEventKind};
-        if !self.side_comments.get()
-            || self.details.tabs.selected_index() != COMMENTS_TAB_INDEX
-            || self.rail_preview().is_none()
-        {
+        if !self.side_comments.get() || self.rail_preview().is_none() {
             return false;
         }
         let rail_focused = self.rail_has_focus();
@@ -1776,9 +1770,7 @@ impl RightPane {
                 handled
             }
             Event::Mouse(mouse)
-                // Below the top border, which holds the tabs.
-                if mouse.row > area.y
-                    && area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) =>
+                if area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) =>
             {
                 match mouse.kind {
                     MouseEventKind::ScrollDown => preview.scroll_by(1),
@@ -1961,7 +1953,19 @@ impl RightPane {
             let row = mouse.row;
 
             let steps_area = self.steps.last_area();
-            if col >= steps_area.x
+            // Beside the code, one frame holds both: the list's column,
+            // tabs on the border included, is the details pane's; the rest is
+            // the steps panel's.
+            let rail = self.last_details_area.get();
+            if self.side_comments.get()
+                && !rail.is_empty()
+                && col >= rail.x
+                && col < rail.right()
+                && row + 1 >= rail.y
+                && row < rail.bottom()
+            {
+                self.focus_details();
+            } else if col >= steps_area.x
                 && col < steps_area.x + steps_area.width
                 && row >= steps_area.y
                 && row < steps_area.y + steps_area.height
@@ -2078,7 +2082,9 @@ impl RightPane {
         // The details pane is hidden while previewing a collection overview
         // (collections have no notes or comments), so keep focus on the
         // overview instead of landing on an invisible pane.
-        if self.overview_active {
+        // Beside the code the details pane is only the comment list, which
+        // is hidden beside the Info and Query tabs.
+        if self.overview_active || (self.side_comments.get() && self.rail_preview().is_none()) {
             self.focus_steps();
             return;
         }

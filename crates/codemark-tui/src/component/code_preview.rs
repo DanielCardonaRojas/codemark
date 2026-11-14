@@ -852,6 +852,48 @@ impl CodePreview {
             && self.focused_thread().is_some_and(|t| self.inline.threads[t].entries.len() > 1)
     }
 
+    /// Whether the side list is drawn beside the code this frame.
+    fn rail_shown(&self) -> bool {
+        self.inline.beside.get() && self.inline.rail_width.get() > 0
+    }
+
+    /// Draw the vertical scrollbar in column `x`, over the code's rows, when
+    /// the view can scroll.
+    fn render_scrollbar(&self, x: u16, buf: &mut Buffer) {
+        let code_area = self.last_area.get();
+        let height = code_area.height as usize;
+        let list_len = self.scroll_rows();
+        if self.code.is_empty() || height == 0 || list_len <= height {
+            return;
+        }
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(None)
+            .thumb_symbol("┃");
+
+        // Ratatui 0.29's thumb math sizes the thumb as
+        // `viewport / (content_length - 1 + viewport)` and caps the thumb position at
+        // `content_length - 1`. Passing the raw line count there makes the thumb too
+        // short and unable to reach the bottom (a gap of one thumb-height is left).
+        // Instead, model `content_length` as the number of scroll positions
+        // (`list_len - height + 1`) and leave `viewport_content_length` at its default
+        // so Ratatui uses the track height as the viewport. This yields a thumb of size
+        // `height^2 / list_len` (the correct visible/total ratio) and a max position of
+        // `list_len - height`, so the thumb reaches the bottom on the last page.
+        let scroll_positions = list_len - height + 1;
+        let mut scrollbar_state =
+            ScrollbarState::new(scroll_positions).position(self.visible_offset());
+        let scrollbar_area = Rect { x, y: code_area.top(), width: 1, height: code_area.height };
+        scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
+    }
+
+    /// Room for bubble text in the side list: its width less the scrollbar
+    /// column and the bubble's chrome.
+    fn rail_text_width(&self) -> usize {
+        (self.inline.rail_width.get() as usize).saturating_sub(1 + BUBBLE_CHROME).max(1)
+    }
+
     /// Clear the side panel's hit-test areas and scroll range when it is
     /// not drawn.
     pub fn invalidate_rail(&self) {
@@ -907,8 +949,7 @@ impl CodePreview {
     /// The side panel's bubbles in list order (loose threads first), wrapped
     /// to its last width, and the row each starts on.
     fn rail_items(&self) -> (Vec<RailItem>, Vec<usize>) {
-        let text_width =
-            (self.inline.rail_width.get() as usize).saturating_sub(BUBBLE_CHROME).max(1);
+        let text_width = self.rail_text_width();
         let mut items: Vec<RailItem> = self
             .inline
             .loose
@@ -985,10 +1026,13 @@ impl CodePreview {
                 Style::default().fg(palette.dim).add_modifier(Modifier::ITALIC),
             ));
             ratatui::widgets::Paragraph::new(hint).render(area, buf);
+            drop(hits);
+            self.render_scrollbar(area.right().saturating_sub(1), buf);
             return;
         }
 
-        let width = area.width as usize;
+        // The last column holds the scrollbar for code and comments alike.
+        let width = (area.width as usize).saturating_sub(1);
         let code_area = self.last_area.get();
         let focused = self.focused_thread();
 
@@ -1031,6 +1075,8 @@ impl CodePreview {
                 hits.push((first, last, thread));
             }
         }
+        drop(hits);
+        self.render_scrollbar(area.right().saturating_sub(1), buf);
     }
 
     /// Index of the thread whose bubble the cursor is on.
@@ -1635,34 +1681,10 @@ impl Component for CodePreview {
             }
         }
 
-        // Render scrollbar
-        if !self.code.is_empty() && list_len > height {
-            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(None)
-                .end_symbol(None)
-                .track_symbol(None)
-                .thumb_symbol("┃");
-
-            // Ratatui 0.29's thumb math sizes the thumb as
-            // `viewport / (content_length - 1 + viewport)` and caps the thumb position at
-            // `content_length - 1`. Passing the raw line count there makes the thumb too
-            // short and unable to reach the bottom (a gap of one thumb-height is left).
-            // Instead, model `content_length` as the number of scroll positions
-            // (`list_len - height + 1`) and leave `viewport_content_length` at its default
-            // so Ratatui uses the track height as the viewport. This yields a thumb of size
-            // `height^2 / list_len` (the correct visible/total ratio) and a max position of
-            // `list_len - height`, so the thumb reaches the bottom on the last page.
-            let scroll_positions = list_len - height + 1;
-            let mut scrollbar_state = ScrollbarState::new(scroll_positions).position(offset);
-
-            let scrollbar_area = Rect {
-                x: code_area.right().saturating_sub(1),
-                y: code_area.top(),
-                width: 1,
-                height: code_area.height,
-            };
-
-            scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
+        // Beside the code the scrollbar sits at the far right of the side
+        // list, so code and comments read as one viewport.
+        if !self.rail_shown() {
+            self.render_scrollbar(code_area.right().saturating_sub(1), buf);
         }
     }
 
@@ -2956,5 +2978,20 @@ mod tests {
         });
         assert!(preview.handle_event(&up), "the first wheel-up moves the code");
         assert_eq!(preview.scroll_offset.get(), 11);
+    }
+
+    #[test]
+    fn beside_the_code_the_scrollbar_is_at_the_far_right_of_the_list() {
+        let mut preview = CodePreview::new(numbered_code(40), "txt");
+        preview.set_threads(vec![thread("a", 1, 1, &["one"])]);
+        let buf = render_beside(&preview, 30, 44, 8);
+        let thumb = |x: u16| (0..8).any(|y| buf[(x, y)].symbol() == "┃");
+        assert!(thumb(30 + 44 - 1), "thumb in the list's last column");
+        assert!(!thumb(29), "none at the code's edge");
+
+        // Without the list, the code keeps its own scrollbar.
+        preview.invalidate_rail();
+        let buf = render_to_buffer(&preview, 30, 8);
+        assert!((0..8).any(|y| buf[(29, y)].symbol() == "┃"));
     }
 }

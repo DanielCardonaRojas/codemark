@@ -3583,13 +3583,51 @@ mod tests {
         assert!(hint_x > area.width / 2, "under the side panel");
         assert!(layout.get_status_bindings().iter().any(|b| b.key == "r"), "r in the key bar");
 
-        // With a pager under the code, the side panel ends where the steps
-        // panel does so their bottom borders line up.
+        // One frame holds code and comments: no border between them, no
+        // title over the list (it is the only thing there), the scrollbar at
+        // its far right.
+        let row = |buf: &Buffer, y: u16| -> String {
+            (0..area.width).map(|x| buf[(x, y)].symbol()).collect()
+        };
+        let top = row(&buf, 0);
+        assert!(top.contains("Steps"), "{top}");
+        assert!(!top.contains("Comments") && !top.contains("Details"), "{top}");
+        assert_eq!(top.matches('╮').count(), 1, "one frame: {top}");
+        let plain = row(&buf, 1);
+        assert_eq!(plain.matches('│').count(), 2, "only the frame's sides: {plain}");
+
+        // Clicking the border over the list focuses the list.
+        layout.right_pane.focus_steps();
+        let x = area.width - 12;
+        layout.handle_event(&Event::Mouse(ratatui::crossterm::event::MouseEvent {
+            kind: ratatui::crossterm::event::MouseEventKind::Down(
+                ratatui::crossterm::event::MouseButton::Left,
+            ),
+            column: x,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        }));
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        assert!(layout.right_pane.rail_has_focus());
+
+        // Beside the Info tab there is no list: the content takes the frame,
+        // and the list can't take focus.
+        layout.right_pane.focus_steps();
+        layout.right_pane.steps.tabs.set_selected(right_pane::INFO_TAB_INDEX);
+        let buf = render(&layout);
+        assert!(find(&buf, "first body").is_none(), "no list beside Info");
+        layout.right_pane.focus_details();
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+        layout.right_pane.steps.tabs.set_selected(0);
+        render(&layout);
+        layout.right_pane.focus_details();
+        render(&layout);
+
+        // With a pager under it, the frame ends above the pager.
         layout.right_pane.pager_total = 3;
         let buf = render(&layout);
-        let row = |y: u16| -> String { (0..area.width).map(|x| buf[(x, y)].symbol()).collect() };
-        assert_eq!(row(area.height - 2).matches('╯').count(), 2, "{}", row(area.height - 2));
-        assert!(!row(area.height - 1).contains('╯'), "{}", row(area.height - 1));
+        assert_eq!(row(&buf, area.height - 2).matches('╯').count(), 1);
+        assert!(!row(&buf, area.height - 1).contains('╯'));
         layout.right_pane.pager_total = 0;
         assert!(press(&mut layout, 'j'));
         render(&layout);
