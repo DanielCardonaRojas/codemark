@@ -28,6 +28,17 @@ pub(crate) enum DraftKind {
     Reply { root_id: String },
 }
 
+/// Which pane of the draft modal is showing. Only anchored drafts have a
+/// query, so replies stay on [`DraftTab::Body`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum DraftTab {
+    /// The comment text, editable.
+    #[default]
+    Body,
+    /// The generated anchor query, read-only.
+    Query,
+}
+
 /// A comment being typed in the modal.
 #[derive(Debug, Clone)]
 pub(crate) struct CommentDraft {
@@ -35,6 +46,12 @@ pub(crate) struct CommentDraft {
     repo_root: Option<String>,
     kind: DraftKind,
     body: TextArea,
+    tab: DraftTab,
+    /// Wrapped rows of the Query tab scrolled past.
+    query_scroll: usize,
+    /// The furthest the Query tab can scroll, as of its last render (wrapping
+    /// depends on the modal's width, which only rendering knows).
+    query_scroll_max: std::cell::Cell<usize>,
 }
 
 impl CommentDraft {
@@ -42,6 +59,21 @@ impl CommentDraft {
         match self.kind {
             DraftKind::Anchored(_) => " New comment ",
             DraftKind::Reply { .. } => " Reply ",
+        }
+    }
+
+    fn anchor(&self) -> Option<&CommentAnchor> {
+        match &self.kind {
+            DraftKind::Anchored(anchor) => Some(anchor),
+            DraftKind::Reply { .. } => None,
+        }
+    }
+
+    fn footer(&self) -> &'static str {
+        match (self.anchor(), self.tab) {
+            (None, _) => " Enter new line · Ctrl+S save · Esc cancel ",
+            (Some(_), DraftTab::Body) => " Enter new line · Tab query · Ctrl+S save · Esc cancel ",
+            (Some(_), DraftTab::Query) => " ↑↓ scroll · Tab body · Ctrl+S save · Esc cancel ",
         }
     }
 
@@ -113,6 +145,9 @@ impl BrowserLayout {
                     repo_root: self.right_pane.active_repo_root.clone(),
                     kind: DraftKind::Anchored(anchor),
                     body: TextArea::default(),
+                    tab: DraftTab::Body,
+                    query_scroll: 0,
+                    query_scroll_max: Default::default(),
                 });
             }
             Err(e) => self.notify(false, e.to_string()),
@@ -133,6 +168,9 @@ impl BrowserLayout {
             repo_root: self.right_pane.active_repo_root.clone(),
             kind: DraftKind::Reply { root_id },
             body: TextArea::default(),
+            tab: DraftTab::Body,
+            query_scroll: 0,
+            query_scroll_max: Default::default(),
         });
         true
     }
@@ -198,8 +236,9 @@ impl BrowserLayout {
     }
 
     /// Keys while the draft is open: type, Enter for a new line, arrows /
-    /// Home / End to move the cursor, Ctrl+S to save, Esc to cancel. Always
-    /// handled (the modal swallows input).
+    /// Home / End to move the cursor, Tab to flip an anchored draft between
+    /// its body and its (read-only) query, Ctrl+S to save, Esc to cancel.
+    /// Always handled (the modal swallows input).
     pub(super) fn handle_comment_draft_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
         let Some(draft) = self.comment_draft.as_mut() else { return };
@@ -207,6 +246,23 @@ impl BrowserLayout {
             KeyCode::Esc => self.comment_draft = None,
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_comment_draft()
+            }
+            KeyCode::Tab | KeyCode::BackTab if draft.anchor().is_some() => {
+                draft.tab = match draft.tab {
+                    DraftTab::Body => DraftTab::Query,
+                    DraftTab::Query => DraftTab::Body,
+                };
+            }
+            _ if draft.tab == DraftTab::Query => {
+                let max = draft.query_scroll_max.get();
+                match key.code {
+                    KeyCode::Up => {
+                        draft.query_scroll = draft.query_scroll.min(max).saturating_sub(1)
+                    }
+                    KeyCode::Down => draft.query_scroll = (draft.query_scroll + 1).min(max),
+                    KeyCode::Home => draft.query_scroll = 0,
+                    _ => {}
+                }
             }
             _ => {
                 draft.body.handle_key(key);
@@ -248,6 +304,7 @@ impl BrowserLayout {
     /// Bracketed paste while the draft is open goes into its body.
     pub(super) fn paste_into_comment_draft(&mut self, text: &str) -> bool {
         let Some(draft) = self.comment_draft.as_mut() else { return false };
+        draft.tab = DraftTab::Body;
         draft.body.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
         true
     }
@@ -270,22 +327,44 @@ impl BrowserLayout {
             .border_style(Style::default().fg(palette.accent))
             .title(Span::styled(draft.title(), Style::default().add_modifier(Modifier::BOLD)))
             .title_bottom(Line::from(Span::styled(
-                " Enter new line · Ctrl+S save · Esc cancel ",
+                draft.footer(),
                 Style::default().fg(palette.dim),
             )));
         let inner = block.inner(popup);
         block.render(popup, buf);
 
+        let tab_bar = match draft.anchor() {
+            None => Line::default(),
+            Some(_) => {
+                let tab = |label: &'static str, which: DraftTab| {
+                    if draft.tab == which {
+                        Span::styled(
+                            label,
+                            Style::default()
+                                .fg(palette.accent)
+                                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                        )
+                    } else {
+                        Span::styled(label, Style::default().fg(palette.dim))
+                    }
+                };
+                Line::from(vec![
+                    tab("Body", DraftTab::Body),
+                    Span::raw("  "),
+                    tab("Query", DraftTab::Query),
+                ])
+            }
+        };
         // The body is wrapped here, by display width, rather than by
         // `Paragraph::wrap`, so the cursor's row is known exactly and the
         // caret cell past a full line's end isn't dropped at the wrap.
         let width = inner.width as usize;
-        let header = Paragraph::new(Line::from(Span::styled(
-            draft.context(),
-            Style::default().fg(palette.dim),
-        )))
+        let header = Paragraph::new(vec![
+            Line::from(Span::styled(draft.context(), Style::default().fg(palette.dim))),
+            tab_bar,
+        ])
         .wrap(Wrap { trim: false });
-        let header_rows = (header.line_count(inner.width) + 1).min(inner.height as usize);
+        let header_rows = header.line_count(inner.width).min(inner.height as usize);
         header.render(Rect { height: header_rows as u16, ..inner }, buf);
         let body_area = Rect {
             y: inner.y + header_rows as u16,
@@ -293,6 +372,26 @@ impl BrowserLayout {
             ..inner
         };
 
+        if let (DraftTab::Query, Some(anchor)) = (draft.tab, draft.anchor()) {
+            let query_style = Style::default().fg(palette.emphasis);
+            let mut lines: Vec<Line> = anchor
+                .query
+                .lines()
+                .map(|l| Line::from(Span::styled(l.to_string(), query_style)))
+                .collect();
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                format!("content hash {}", anchor.content_hash),
+                Style::default().fg(palette.dim),
+            )));
+            // Scroll by wrapped rows, so a long line's tail can be reached.
+            let query = Paragraph::new(lines).wrap(Wrap { trim: false });
+            let max = query.line_count(body_area.width).saturating_sub(body_area.height as usize);
+            draft.query_scroll_max.set(max);
+            let scroll = draft.query_scroll.min(max) as u16;
+            query.scroll((scroll, 0)).render(body_area, buf);
+            return;
+        }
         let text_style = Style::default().fg(palette.emphasis);
         let (cursor_line, cursor_col) = draft.body.cursor_line_col();
         let mut rows = Vec::new();
@@ -449,6 +548,9 @@ mod tests {
             repo_root: None,
             kind: DraftKind::Reply { root_id: "missing-root".into() },
             body: TextArea::new("typed "),
+            tab: DraftTab::Body,
+            query_scroll: 0,
+            query_scroll_max: Default::default(),
         });
         (layout, dir)
     }
@@ -522,6 +624,89 @@ mod tests {
             .flat_map(|y| (0..area.width).map(move |x| (x, y)))
             .find(|&(x, y)| buf[(x, y)].modifier.contains(Modifier::REVERSED));
         assert!(caret.is_some(), "the caret is on screen");
+    }
+
+    fn rendered_text(layout: &BrowserLayout) -> String {
+        let area = Rect::new(0, 0, 70, 14);
+        let mut buf = Buffer::empty(area);
+        layout.render_comment_draft(area, &mut buf);
+        (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn tab_shows_an_anchored_drafts_query_read_only() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut layout, _dir) = layout_with_draft();
+        layout.comment_draft.as_mut().unwrap().kind = DraftKind::Anchored(CommentAnchor {
+            query: "(call_expression\n  function: (identifier) @target)".into(),
+            content_hash: "abc123".into(),
+            anchor_hint: "L3: ping();".into(),
+        });
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        assert!(rendered_text(&layout).contains("Tab query"));
+        assert!(!rendered_text(&layout).contains("(call_expression"));
+
+        layout.handle_event(&key(KeyCode::Tab));
+        let shown = rendered_text(&layout);
+        assert!(shown.contains("(call_expression"), "{shown}");
+        assert!(shown.contains("function: (identifier) @target)"), "{shown}");
+        assert!(shown.contains("content hash abc123"), "{shown}");
+
+        // The query tab is read-only: typing doesn't reach the body.
+        layout.handle_event(&key(KeyCode::Char('x')));
+        layout.handle_event(&key(KeyCode::Backspace));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().body.text(), "typed ");
+
+        layout.handle_event(&key(KeyCode::Down));
+        assert!(
+            rendered_text(&layout).contains("(call_expression"),
+            "a query that fits doesn't scroll"
+        );
+
+        layout.handle_event(&key(KeyCode::Tab));
+        layout.handle_event(&key(KeyCode::Char('x')));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().body.text(), "typed x");
+    }
+
+    #[test]
+    fn query_tab_scrolls_through_a_long_wrapped_line() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut layout, _dir) = layout_with_draft();
+        let long = format!("(call {} TAIL) @target", "x ".repeat(400));
+        layout.comment_draft.as_mut().unwrap().kind = DraftKind::Anchored(CommentAnchor {
+            query: long,
+            content_hash: "abc123".into(),
+            anchor_hint: "L3: ping();".into(),
+        });
+        let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
+        layout.handle_event(&key(KeyCode::Tab));
+        assert!(!rendered_text(&layout).contains("TAIL"), "one line taller than the pane");
+        for _ in 0..40 {
+            layout.handle_event(&key(KeyCode::Down));
+            rendered_text(&layout);
+        }
+        let shown = rendered_text(&layout);
+        assert!(shown.contains("TAIL"), "{shown}");
+        assert!(shown.contains("content hash abc123"), "{shown}");
+        // Down stops at the end, so one Up moves at once.
+        layout.handle_event(&key(KeyCode::Up));
+        let max = layout.comment_draft.as_ref().unwrap().query_scroll_max.get();
+        assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, max - 1);
+    }
+
+    #[test]
+    fn replies_have_no_query_tab() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let (mut layout, _dir) = layout_with_draft();
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().tab, DraftTab::Body);
+        assert!(!rendered_text(&layout).contains("Query"));
     }
 
     #[test]
