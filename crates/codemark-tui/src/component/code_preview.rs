@@ -19,8 +19,8 @@ use syntect::util::LinesWithEndings;
 
 use super::Component;
 use super::inline_comments::{
-    BUBBLE_CHROME, BubbleStyle, DisplayRow, InlineThread, RowLayout, build_layout,
-    render_bubble_line,
+    BUBBLE_CHROME, BubbleLine, BubbleStyle, DisplayRow, InlineThread, LooseThread, RowLayout,
+    bubble_lines, build_layout, folded_bubble_lines, render_bubble_line, stack_rail,
 };
 use crate::event::Event;
 
@@ -156,8 +156,20 @@ struct InlineState {
     layout_gen: Cell<u64>,
     /// Root id of the thread whose bubble the cursor is on. `None` while the
     /// cursor is on a code line (`selected_line`); the bubble always sits
-    /// under `selected_line`.
+    /// under `selected_line`. Beside the code (see [`Self::beside`]) there
+    /// are no bubbles to stand on, so it names the picked thread instead.
     cursor_on: Option<String>,
+    /// Threads with no place in the code, listed in the side panel only.
+    loose: Vec<LooseThread>,
+    /// Whether threads are listed in a side panel ([`CodePreview::render_rail`])
+    /// instead of inline under their code. Set at render time by the layout.
+    beside: Cell<bool>,
+    /// Whether the side panel has focus, which shows the picked thread there
+    /// and on its code as if the preview had focus.
+    rail_focused: Cell<bool>,
+    /// Screen rows `(first, last)` of each anchored bubble drawn in the side
+    /// panel last frame, with its thread index, for mouse hit-testing.
+    rail_hits: RefCell<Vec<(u16, u16, usize)>>,
 }
 
 impl CodePreview {
@@ -238,6 +250,7 @@ impl CodePreview {
     /// entry points).
     fn reset_view(&mut self) {
         self.inline.threads.clear();
+        self.inline.loose.clear();
         self.inline.cursor_on = None;
         self.invalidate_layout();
         self.scroll_offset.set(0);
@@ -586,9 +599,7 @@ impl CodePreview {
                     }
                     ratatui::crossterm::event::KeyCode::Left
                     | ratatui::crossterm::event::KeyCode::Char('h') => {
-                        if self.selection_mode
-                            && self.selected_line.is_some()
-                            && self.inline.cursor_on.is_none()
+                        if self.selection_mode && self.selected_line.is_some() && !self.on_bubble()
                         {
                             self.cursor_col = self.cursor_col.saturating_sub(1);
                             true
@@ -599,7 +610,7 @@ impl CodePreview {
                     ratatui::crossterm::event::KeyCode::Right
                     | ratatui::crossterm::event::KeyCode::Char('l') => {
                         if self.selection_mode
-                            && self.inline.cursor_on.is_none()
+                            && !self.on_bubble()
                             && let Some(line) = self.selected_line
                         {
                             self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
@@ -661,7 +672,7 @@ impl CodePreview {
             return true;
         }
         let Some(line) = self.selected_line else { return false };
-        if self.inline.cursor_on.is_some() {
+        if self.on_bubble() {
             return true;
         }
         if !self.selection_mode {
@@ -690,7 +701,7 @@ impl CodePreview {
     /// non-blank and last character. Returns `false` outside selection mode
     /// so the key falls through.
     fn line_motion(&mut self, key: char) -> bool {
-        if !self.selection_mode || self.inline.cursor_on.is_some() {
+        if !self.selection_mode || self.on_bubble() {
             return false;
         }
         let Some(line) = self.selected_line else { return false };
@@ -755,6 +766,210 @@ impl CodePreview {
         &self.inline.threads
     }
 
+    /// Replace the threads that have no place in the code (listed in the
+    /// side panel only).
+    pub fn set_loose_threads(&mut self, loose: Vec<LooseThread>) {
+        self.inline.loose = loose;
+    }
+
+    /// The threads with no place in the code.
+    pub fn loose_threads(&self) -> &[LooseThread] {
+        &self.inline.loose
+    }
+
+    /// Whether the cursor stands on an inline bubble (never beside the code).
+    fn on_bubble(&self) -> bool {
+        self.inline.cursor_on.is_some() && !self.inline.beside.get()
+    }
+
+    /// Whether threads are listed beside the code instead of inline.
+    pub fn is_beside(&self) -> bool {
+        self.inline.beside.get()
+    }
+
+    /// List threads beside the code ([`Self::render_rail`]) or inline under
+    /// it. Keeps the cursor's line on the same screen row as bubble rows
+    /// appear or vanish. Takes `&self` so the layout can set it while drawing.
+    pub fn set_beside(&self, beside: bool) {
+        if self.inline.beside.get() == beside {
+            return;
+        }
+        let anchor = self.selected_line.unwrap_or(0);
+        let screen_row = self.row_of(anchor) as i64 - self.scroll_offset.get() as i64;
+        self.inline.beside.set(beside);
+        self.invalidate_layout();
+        if !beside {
+            self.inline.rail_hits.borrow_mut().clear();
+        }
+        let height = self.last_area.get().height as usize;
+        if height == 0 {
+            return;
+        }
+        let max_offset = self.total_rows().saturating_sub(height) as i64;
+        self.scroll_offset
+            .set((self.row_of(anchor) as i64 - screen_row).clamp(0, max_offset) as u16);
+        tracing::debug!(target: "codemark::comments", beside, "comment threads moved");
+    }
+
+    /// Tell the preview whether its side panel has focus, so the picked
+    /// thread stays highlighted while keys go to the panel.
+    pub fn set_rail_focused(&self, focused: bool) {
+        self.inline.rail_focused.set(focused);
+    }
+
+    /// Fold keys from the side panel: `z` folds the picked thread's bubble,
+    /// `Z` every bubble. Returns whether the key was used.
+    pub fn handle_rail_key(&mut self, code: ratatui::crossterm::event::KeyCode) -> bool {
+        match code {
+            ratatui::crossterm::event::KeyCode::Char('z') => self.toggle_fold(),
+            ratatui::crossterm::event::KeyCode::Char('Z') => self.toggle_fold_all(),
+            _ => false,
+        }
+    }
+
+    /// Pick the next (or previous) thread from the side panel: the same as
+    /// `n` / `N` in the preview, which also scrolls its code into view.
+    pub fn pick_thread(&mut self, forward: bool) -> bool {
+        self.jump_to_thread(forward)
+    }
+
+    /// Clear the side panel's hit-test areas when it is not drawn.
+    pub fn invalidate_rail(&self) {
+        self.inline.rail_hits.borrow_mut().clear();
+    }
+
+    /// Pick the thread whose bubble the side panel drew at screen row `y`.
+    /// Returns whether a bubble was there.
+    pub fn click_rail(&mut self, y: u16) -> bool {
+        let hit = self
+            .inline
+            .rail_hits
+            .borrow()
+            .iter()
+            .find(|(top, bottom, _)| (*top..=*bottom).contains(&y))
+            .map(|&(_, _, thread)| thread);
+        let Some(thread) = hit else { return false };
+        let t = &self.inline.threads[thread];
+        self.inline.cursor_on = Some(t.root_id.clone());
+        self.selected_line = Some(t.anchor_start.min(self.line_count().saturating_sub(1)));
+        self.visual_anchor = None;
+        self.scroll_to_cursor();
+        self.user_moved = true;
+        true
+    }
+
+    /// The scroll offset the preview draws with: the stored one, clamped to
+    /// the content (see the note in `render`).
+    fn visible_offset(&self) -> usize {
+        let height = self.last_area.get().height as usize;
+        (self.scroll_offset.get() as usize).min(self.total_rows().saturating_sub(height))
+    }
+
+    /// Draw the threads as a list of bubbles in `area`, beside the preview.
+    ///
+    /// Each anchored bubble starts on the screen row of its node's first
+    /// line, so the list scrolls with the code; a bubble that would overlap
+    /// the one above is pushed down. The picked thread is always level with
+    /// its code: the list shifts by however far it was pushed. Threads with
+    /// no place in the code come first, from the top of the file.
+    ///
+    /// Call after [`Component::render`] in the same frame: the rows come
+    /// from where the preview just drew its code.
+    pub fn render_rail(&self, area: Rect, buf: &mut Buffer) {
+        let mut hits = self.inline.rail_hits.borrow_mut();
+        hits.clear();
+        if area.width < 8 || area.height == 0 {
+            return;
+        }
+        let palette = crate::theme::palette();
+        if self.inline.threads.is_empty() && self.inline.loose.is_empty() {
+            let hint = Line::from(Span::styled(
+                " No comments · c on a line adds one",
+                Style::default().fg(palette.dim).add_modifier(Modifier::ITALIC),
+            ));
+            ratatui::widgets::Paragraph::new(hint).render(area, buf);
+            return;
+        }
+
+        let width = area.width as usize;
+        let text_width = width.saturating_sub(BUBBLE_CHROME).max(1);
+        let code_area = self.last_area.get();
+        let offset = self.visible_offset();
+        let layout = self.layout();
+        let focused = self.focused_thread();
+
+        // (anchored thread index, desired row, bubble rows), in list order.
+        struct Item {
+            thread: Option<usize>,
+            desired: usize,
+            lines: Vec<BubbleLine>,
+        }
+        let mut items: Vec<Item> = self
+            .inline
+            .loose
+            .iter()
+            .map(|t| Item {
+                thread: None,
+                desired: 0,
+                lines: bubble_lines(&t.entries, t.tag, text_width),
+            })
+            .collect();
+        let mut anchored: Vec<usize> = (0..self.inline.threads.len()).collect();
+        anchored.sort_by_key(|&i| {
+            let t = &self.inline.threads[i];
+            (t.anchor_start, t.anchor_end)
+        });
+        items.extend(anchored.into_iter().map(|i| {
+            let t = &self.inline.threads[i];
+            let lines = if self.inline.folded.contains(&t.root_id) {
+                folded_bubble_lines(&t.entries, None, text_width)
+            } else {
+                bubble_lines(&t.entries, None, text_width)
+            };
+            Item { thread: Some(i), desired: layout.row_of(t.anchor_start), lines }
+        }));
+        drop(layout);
+
+        let desired: Vec<usize> = items.iter().map(|i| i.desired).collect();
+        let heights: Vec<usize> = items.iter().map(|i| i.lines.len()).collect();
+        let starts = stack_rail(&desired, &heights);
+        // How far the picked bubble was pushed below its code: shift the whole
+        // list up by that much so it lines up.
+        let shift = items
+            .iter()
+            .zip(&starts)
+            .find(|(item, _)| item.thread.is_some() && item.thread == focused)
+            .map_or(0, |(item, &start)| start - item.desired);
+        // Screen row of list row 0: where code row 0 would be drawn.
+        let origin = code_area.y as i64 - offset as i64 - shift as i64;
+
+        for (item, &start) in items.iter().zip(&starts) {
+            let is_focused = item.thread.is_some() && item.thread == focused;
+            let style = BubbleStyle {
+                border: if is_focused { palette.marker } else { palette.gray },
+                text: palette.emphasis,
+                dim: palette.dim,
+                accent: palette.accent,
+            };
+            let top = origin + start as i64;
+            let mut drawn: Option<(u16, u16)> = None;
+            for (row, line) in item.lines.iter().enumerate() {
+                let y = top + row as i64;
+                if y < area.y as i64 || y >= area.bottom() as i64 {
+                    continue;
+                }
+                let y = y as u16;
+                let rendered = render_bubble_line(line, 0, width, is_focused, &style);
+                ratatui::widgets::Paragraph::new(rendered)
+                    .render(Rect { x: area.x, y, width: area.width, height: 1 }, buf);
+                drawn = Some(drawn.map_or((y, y), |(first, _)| (first, y)));
+            }
+            if let (Some(thread), Some((first, last))) = (item.thread, drawn) {
+                hits.push((first, last, thread));
+            }
+        }
+    }
+
     /// Index of the thread whose bubble the cursor is on.
     fn cursor_thread(&self) -> Option<usize> {
         let id = self.inline.cursor_on.as_deref()?;
@@ -765,7 +980,7 @@ impl CodePreview {
     /// narrowest thread whose anchored lines contain the cursor line. Only
     /// while the preview has focus.
     fn focused_thread(&self) -> Option<usize> {
-        if !self.focused {
+        if !self.focused && !(self.inline.rail_focused.get() && self.inline.beside.get()) {
             return None;
         }
         if let Some(t) = self.cursor_thread() {
@@ -806,6 +1021,9 @@ impl CodePreview {
     /// [`Self::threads_under`], expanded ones only: the bubbles the cursor
     /// can stop on.
     fn bubbles_under(&self, line: usize) -> Vec<usize> {
+        if self.inline.beside.get() {
+            return Vec::new();
+        }
         self.threads_under(line)
             .into_iter()
             .filter(|&i| !self.inline.folded.contains(&self.inline.threads[i].root_id))
@@ -817,6 +1035,22 @@ impl CodePreview {
     /// all when every one is folded. Returns `false` when there is nothing to
     /// fold, so the key can fall through.
     fn toggle_fold(&mut self) -> bool {
+        // Beside the code, fold the picked thread's bubble in the side panel
+        // and keep it picked.
+        if self.inline.beside.get() {
+            // Only replies fold here: a thread without any has nothing to hide.
+            let Some(t) =
+                self.focused_thread().filter(|&t| self.inline.threads[t].entries.len() > 1)
+            else {
+                return false;
+            };
+            let id = self.inline.threads[t].root_id.clone();
+            if !self.inline.folded.remove(&id) {
+                self.inline.folded.insert(id);
+            }
+            self.invalidate_layout();
+            return true;
+        }
         if let Some(t) = self.cursor_thread() {
             let id = self.inline.threads[t].root_id.clone();
             self.relayout_keeping_cursor(|preview| {
@@ -850,7 +1084,8 @@ impl CodePreview {
     /// Clear `cursor_on` when its thread was removed or folded away.
     fn drop_hidden_cursor_bubble(&mut self) {
         if let Some(id) = self.inline.cursor_on.clone()
-            && (self.cursor_thread().is_none() || self.inline.folded.contains(&id))
+            && (self.cursor_thread().is_none()
+                || (!self.inline.beside.get() && self.inline.folded.contains(&id)))
         {
             self.inline.cursor_on = None;
         }
@@ -887,7 +1122,7 @@ impl CodePreview {
             self.selected_line = Some(0);
             return;
         };
-        if let Some(t) = self.cursor_thread() {
+        if let Some(t) = self.cursor_thread().filter(|_| !self.inline.beside.get()) {
             let bubbles = self.bubbles_under(line);
             let previous = bubbles.iter().position(|&b| b == t).filter(|&p| p > 0);
             self.inline.cursor_on =
@@ -965,7 +1200,14 @@ impl CodePreview {
         if self.inline.folded.remove(&id) {
             self.invalidate_layout();
         }
-        self.selected_line = Some(self.thread_line(&self.inline.threads[target]));
+        let thread = &self.inline.threads[target];
+        // Beside the code the bubble lines up with the node's first line, so
+        // put the cursor there; inline, the bubble is under its last line.
+        self.selected_line = Some(if self.inline.beside.get() {
+            thread.anchor_start.min(self.line_count().saturating_sub(1))
+        } else {
+            self.thread_line(thread)
+        });
         // A selection can't end on a bubble: leave visual mode.
         self.visual_anchor = None;
         self.inline.cursor_on = Some(id);
@@ -975,10 +1217,18 @@ impl CodePreview {
 
     /// `Z`: fold every thread, or unfold them all when all are folded.
     fn toggle_fold_all(&mut self) -> bool {
-        if self.inline.threads.is_empty() {
+        // Beside the code only threads with replies fold.
+        let beside = self.inline.beside.get();
+        let ids: Vec<String> = self
+            .inline
+            .threads
+            .iter()
+            .filter(|t| !beside || t.entries.len() > 1)
+            .map(|t| t.root_id.clone())
+            .collect();
+        if ids.is_empty() {
             return false;
         }
-        let ids: Vec<String> = self.inline.threads.iter().map(|t| t.root_id.clone()).collect();
         let all_folded = ids.iter().all(|id| self.inline.folded.contains(id));
         self.relayout_keeping_cursor(|preview| {
             if all_folded {
@@ -1065,8 +1315,10 @@ impl CodePreview {
                 .then(|| self.cursor_first_row(&self.inline.layout.borrow()))
                 .flatten()
                 .map(|row| row as i64 - self.scroll_offset.get() as i64);
-            let layout =
-                build_layout(self.line_count(), &self.inline.threads, &self.inline.folded, key.1);
+            // Beside the code, threads take no rows in the preview.
+            let threads: &[InlineThread] =
+                if self.inline.beside.get() { &[] } else { &self.inline.threads };
+            let layout = build_layout(self.line_count(), threads, &self.inline.folded, key.1);
             if let Some(screen_row) = cursor_screen_row
                 && let Some(row) = self.cursor_first_row(&layout)
             {
@@ -1144,8 +1396,14 @@ impl Component for CodePreview {
         // Comment sign per line with threads under it: `▾` while any is
         // expanded, `▸` when all are folded.
         let mut comment_signs: HashMap<usize, bool> = HashMap::new();
+        // Beside the code, the sign marks the line the bubble lines up with.
+        let beside = self.inline.beside.get();
         for t in &self.inline.threads {
-            let line = self.thread_line(t);
+            let line = if beside {
+                t.anchor_start.min(self.line_count().saturating_sub(1))
+            } else {
+                self.thread_line(t)
+            };
             let expanded = !self.inline.folded.contains(&t.root_id);
             *comment_signs.entry(line).or_default() |= expanded;
         }
@@ -1171,6 +1429,9 @@ impl Component for CodePreview {
                     // separator, then content: swap in both signs.
                     new_spans.extend(line.spans.get(1).cloned());
                     new_spans.push(match comment_signs.get(&i) {
+                        // Beside the code nothing folds into the gutter, so
+                        // the sign only marks the line.
+                        Some(_) if beside => Span::styled("●", Style::default().fg(palette.accent)),
                         Some(true) => Span::styled("▾", Style::default().fg(palette.accent)),
                         Some(false) => Span::styled("▸", Style::default().fg(palette.accent)),
                         None => Span::raw(" "),
@@ -2351,5 +2612,150 @@ mod tests {
             .collect();
         assert_eq!(node, "call()");
         assert_eq!(buf[(gutter + 8, 1)].symbol(), "c", "highlight starts on the `c`");
+    }
+
+    use ratatui::crossterm::event::KeyCode;
+
+    /// Render `preview` on the left and its side comment list on the right of
+    /// one buffer, as the side-by-side layout does.
+    fn render_beside(
+        preview: &CodePreview,
+        code_width: u16,
+        rail_width: u16,
+        height: u16,
+    ) -> Buffer {
+        let area = Rect { x: 0, y: 0, width: code_width + rail_width, height };
+        let mut buf = Buffer::empty(area);
+        preview.set_beside(true);
+        preview.render(Rect { width: code_width, ..area }, &mut buf);
+        preview.render_rail(Rect { x: code_width, width: rail_width, ..area }, &mut buf);
+        buf
+    }
+
+    /// Text of row `y` from column `x` on.
+    fn row_from(buf: &Buffer, x: u16, y: u16) -> String {
+        (x..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    #[test]
+    fn beside_the_code_threads_take_no_rows_and_line_up_with_their_node() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_threads(vec![thread("t1", 3, 4, &["about line three"])]);
+        let buf = render_beside(&preview, 30, 44, 12);
+
+        for y in 0..12 {
+            assert!(row_text(&buf, y).contains(&format!("line{y}")), "no bubble rows: {y}");
+        }
+        assert!(row_from(&buf, 30, 3).contains("┌ claude"), "{}", row_from(&buf, 30, 3));
+        assert!(row_from(&buf, 30, 4).contains("about line three"));
+        assert!(row_text(&buf, 3).contains('●'), "the gutter marks the thread without an arrow");
+        assert!(!row_text(&buf, 3).contains('▾'));
+    }
+
+    #[test]
+    fn the_side_list_scrolls_with_the_code() {
+        let mut preview = CodePreview::new(numbered_code(40), "txt");
+        preview.set_threads(vec![thread("t1", 10, 10, &["ten"])]);
+        render_beside(&preview, 30, 44, 8);
+        assert!(preview.scroll_by(6));
+        let buf = render_beside(&preview, 30, 44, 8);
+        assert!(row_text(&buf, 4).contains("line10"));
+        assert!(row_from(&buf, 30, 4).contains("┌ claude"), "still level with line10");
+    }
+
+    #[test]
+    fn crowded_bubbles_are_pushed_down_until_picked() {
+        let mut preview = CodePreview::new(numbered_code(30), "txt");
+        preview.set_focus(true);
+        // Both bubbles are three rows; the second can't start on line 2.
+        preview.set_threads(vec![thread("a", 1, 1, &["first"]), thread("b", 2, 2, &["second"])]);
+        let buf = render_beside(&preview, 30, 44, 12);
+        assert!(row_from(&buf, 30, 1).contains("┌ claude"));
+        assert!(row_from(&buf, 30, 5).contains("second"), "pushed below the first bubble");
+
+        // Picking it shifts the list so it sits level with line 2.
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert_eq!(preview.focused_thread_id(), Some("b"));
+        let buf = render_beside(&preview, 30, 44, 12);
+        assert!(row_from(&buf, 30, 2).contains("┌ claude"), "{}", row_from(&buf, 30, 2));
+        assert!(row_from(&buf, 30, 3).contains("second"));
+        assert_eq!(preview.selected_line, Some(2), "the cursor is on the node's first line");
+    }
+
+    #[test]
+    fn j_and_k_step_over_threads_beside_the_code() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        preview.set_focus(true);
+        preview.set_threads(vec![thread("a", 1, 1, &["first"])]);
+        render_beside(&preview, 30, 44, 10);
+        preview.selected_line = Some(1);
+        assert!(preview.handle_event(&key(KeyCode::Char('j'))));
+        assert_eq!(preview.selected_line, Some(2), "no bubble stop under line 1");
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert_eq!(preview.focused_thread_id(), Some("a"));
+        assert!(preview.handle_event(&key(KeyCode::Char('k'))));
+        assert_eq!(preview.selected_line, Some(0), "k from a picked thread moves a line");
+    }
+
+    #[test]
+    fn clicking_a_side_bubble_picks_its_thread() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_threads(vec![thread("a", 2, 2, &["first"]), thread("b", 8, 8, &["second"])]);
+        render_beside(&preview, 30, 44, 12);
+        preview.set_rail_focused(true);
+        assert!(!preview.click_rail(0), "no bubble on row 0");
+        assert!(preview.click_rail(9));
+        assert_eq!(preview.focused_thread_id(), Some("b"));
+        assert_eq!(preview.selected_line, Some(8));
+    }
+
+    #[test]
+    fn loose_threads_lead_the_side_list_with_their_tag() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_threads(vec![thread("a", 1, 1, &["anchored"])]);
+        preview.set_loose_threads(vec![LooseThread {
+            root_id: "l".into(),
+            tag: Some("orphaned"),
+            entries: thread("l", 0, 0, &["lost"]).entries,
+        }]);
+        let buf = render_beside(&preview, 30, 44, 12);
+        assert!(row_from(&buf, 30, 0).contains("orphaned"), "{}", row_from(&buf, 30, 0));
+        assert!(row_from(&buf, 30, 1).contains("lost"));
+        assert!(row_from(&buf, 30, 3).contains("┌ claude"), "anchored one below it");
+        assert!(row_from(&buf, 30, 4).contains("anchored"));
+    }
+
+    #[test]
+    fn leaving_the_side_layout_brings_bubbles_back_inline() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        preview.set_threads(vec![thread("a", 1, 1, &["first"])]);
+        render_beside(&preview, 30, 44, 10);
+        preview.set_beside(false);
+        let buf = render_to_buffer(&preview, 30, 10);
+        assert!(row_text(&buf, 2).contains("┌ claude"), "{}", row_text(&buf, 2));
+    }
+
+    #[test]
+    fn z_beside_the_code_collapses_replies_only() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        preview.set_focus(true);
+        preview.set_threads(vec![
+            thread("a", 1, 1, &["root text", "a reply", "another"]),
+            thread("b", 6, 6, &["alone"]),
+        ]);
+        render_beside(&preview, 30, 44, 14);
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert!(preview.handle_event(&key(KeyCode::Char('z'))));
+        let buf = render_beside(&preview, 30, 44, 14);
+        let rail: Vec<String> = (0..14).map(|y| row_from(&buf, 30, y)).collect();
+        assert!(rail.iter().any(|r| r.contains("root text")), "the root stays: {rail:#?}");
+        assert!(rail.iter().any(|r| r.contains("↳ 2 replies")), "{rail:#?}");
+        assert!(!rail.iter().any(|r| r.contains("a reply")), "replies collapse");
+
+        // A thread without replies has nothing to fold.
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        assert_eq!(preview.focused_thread_id(), Some("b"));
+        assert!(!preview.handle_event(&key(KeyCode::Char('z'))));
     }
 }

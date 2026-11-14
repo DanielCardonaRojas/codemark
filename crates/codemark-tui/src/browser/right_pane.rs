@@ -1,6 +1,7 @@
 use crate::browser::tabbed_panel::{bookmark_health, persisted_bookmark_health};
 use crate::browser::{
-    DetailsPaneSize, PreviewPayload, SectionConfig, StepData, StepLiveUpdate, TabbedPanel,
+    DetailsPaneSize, PreviewPayload, RightPaneSize, SectionConfig, StepData, StepLiveUpdate,
+    TabbedPanel,
 };
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
@@ -72,7 +73,11 @@ pub struct RightPane {
     shown_preview_base: Option<u64>,
     /// Last resolved inline threads and the key they were built for, so
     /// paging back to a step doesn't parse its file again.
-    inline_threads_cache: Option<(u64, Vec<crate::component::InlineThread>)>,
+    inline_threads_cache: Option<(u64, super::inline_threads::Threads)>,
+    /// Whether the last frame drew the details pane beside the preview
+    /// ([`RightPaneSize::SideComments`]), its Comments tab listing threads
+    /// level with their code.
+    side_comments: std::cell::Cell<bool>,
     /// Collection overview panel shown live while browsing collections
     /// (before a collection is entered with Enter).
     pub overview: MarkdownPanel,
@@ -227,6 +232,7 @@ impl RightPane {
             shown_preview: None,
             shown_preview_base: None,
             inline_threads_cache: None,
+            side_comments: std::cell::Cell::new(false),
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -574,10 +580,12 @@ impl RightPane {
             tracing::debug!(
                 target: "codemark::comments",
                 bookmark = %bookmark.id,
-                threads = threads.len(),
+                anchored = threads.anchored.len(),
+                loose = threads.loose.len(),
                 "inline comments refreshed"
             );
-            preview.set_threads(threads);
+            preview.set_threads(threads.anchored);
+            preview.set_loose_threads(threads.loose);
         }
     }
 
@@ -1524,14 +1532,15 @@ impl RightPane {
     /// # Arguments
     /// * `area` - The area to render in
     /// * `buf` - The buffer to render to
-    /// * `hide_details` - If true, hide the details pane (preview + pagination
-    ///   only). The pagination widget stays visible regardless.
+    /// * `size` - The preview layout: whether the details pane is hidden
+    ///   (preview + pagination only; the pagination widget stays visible
+    ///   regardless), below the preview, or beside it.
     /// * `details_size` - Current size mode for the details pane
     pub fn render(
         &self,
         area: Rect,
         buf: &mut Buffer,
-        hide_details: bool,
+        size: RightPaneSize,
         details_size: DetailsPaneSize,
     ) {
         self.last_area.set(area);
@@ -1539,7 +1548,20 @@ impl RightPane {
         // Collections have no notes or comments, so the details pane (Details /
         // Comments tabs) is meaningless while previewing a collection overview.
         // Hide it until the collection is entered and per-bookmark previews load.
-        let hide_details = hide_details || self.overview_active;
+        let hide_details = size.hides_details() || self.overview_active;
+        let beside = size.details_beside() && !hide_details;
+        self.side_comments.set(beside);
+        if let Some(preview) = self.steps.get_step_preview() {
+            preview.set_beside(beside);
+            preview.set_rail_focused(self.rail_has_focus());
+            if !beside {
+                preview.invalidate_rail();
+            }
+        }
+        if beside {
+            self.render_side_by_side(area, buf);
+            return;
+        }
 
         // When the details block isn't drawn, clear its hit-test caches so a
         // click/scroll can't reach the hidden Details panel through areas left
@@ -1619,6 +1641,121 @@ impl RightPane {
         }
         if let Some(md) = self.details_markdown_mut(COMMENTS_TAB_INDEX) {
             md.set_markdown(comments_markdown);
+        }
+    }
+
+    /// The side-by-side layout: the preview and pager on the left, the details
+    /// pane on the right at full height.
+    fn render_side_by_side(&self, area: Rect, buf: &mut Buffer) {
+        // Wide enough for a readable bubble, never more than half the pane.
+        let side_width = (area.width * 2 / 5).clamp(30, 72).min(area.width / 2);
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(side_width)])
+            .split(area);
+        let pager_height = if self.pager_total > 1 { 1 } else { 0 };
+        let left = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(pager_height)])
+            .split(columns[0]);
+
+        self.steps.health_label.set(self.preview_health());
+        self.render_steps_or_loading(left[0], buf);
+        if self.pager_total > 1 {
+            use crate::component::Pager;
+            let health = self.steps_data.iter().map(|step| step.health).collect();
+            let pager = Pager::new(self.pager_total, self.pager_current).with_health(health);
+            pager.render(left[1], buf);
+        }
+
+        // The steps panel drew the preview just now, so the list lines up
+        // with the code as it is on screen.
+        self.last_details_area.set(columns[1]);
+        let preview = self.rail_preview();
+        match preview {
+            Some(preview) if self.details.tabs.selected_index() == COMMENTS_TAB_INDEX => {
+                self.details.render_with_body(columns[1], buf, |inner, buf| {
+                    preview.render_rail(inner, buf);
+                });
+            }
+            _ => {
+                if let Some(preview) = self.steps.get_step_preview() {
+                    preview.invalidate_rail();
+                }
+                self.details.render(columns[1], buf);
+            }
+        }
+    }
+
+    /// The code preview the side panel lists threads for, when it is the one
+    /// on screen (not loading, not the Info or Query tab).
+    fn rail_preview(&self) -> Option<&crate::component::CodePreview> {
+        if self.loading || self.overview_active || self.steps.tabs.selected_index() != 0 {
+            return None;
+        }
+        self.steps.get_step_preview()
+    }
+
+    /// Select the details pane's Comments tab.
+    pub fn show_comments_tab(&mut self) {
+        self.details.tabs.set_selected(COMMENTS_TAB_INDEX);
+    }
+
+    /// Whether the side panel's comment list has focus: keys pick threads
+    /// there, and `r` / `d` act on the picked one.
+    pub fn rail_has_focus(&self) -> bool {
+        self.side_comments.get()
+            && self.focused == RightPaneFocus::Details
+            && self.details.focused
+            && self.details.tabs.selected_index() == COMMENTS_TAB_INDEX
+            && self.rail_preview().is_some()
+    }
+
+    /// Route input over the side panel's comment list: keys pick and fold
+    /// threads, the wheel scrolls the code (the list follows), a click picks
+    /// the bubble under it. Returns whether the event was used.
+    fn handle_rail_event(&mut self, event: &Event) -> bool {
+        use ratatui::crossterm::event::{KeyCode, MouseButton, MouseEventKind};
+        if !self.side_comments.get()
+            || self.details.tabs.selected_index() != COMMENTS_TAB_INDEX
+            || self.rail_preview().is_none()
+        {
+            return false;
+        }
+        let rail_focused = self.rail_has_focus();
+        let area = self.last_details_area.get();
+        let Some(preview) = self.steps.get_step_preview_mut() else { return false };
+        match event {
+            Event::Key(key)
+                if rail_focused
+                    && (key.modifiers - ratatui::crossterm::event::KeyModifiers::SHIFT)
+                        .is_empty() =>
+            {
+                preview.set_rail_focused(true);
+                let handled = match key.code {
+                    KeyCode::Down | KeyCode::Char('j' | 'n') => preview.pick_thread(true),
+                    KeyCode::Up | KeyCode::Char('k' | 'N') => preview.pick_thread(false),
+                    _ => preview.handle_rail_key(key.code),
+                };
+                tracing::debug!(target: "codemark::comments", key = ?key.code, handled, "side panel key");
+                handled
+            }
+            Event::Mouse(mouse)
+                // Below the top border, which holds the tabs.
+                if mouse.row > area.y
+                    && area.contains(ratatui::layout::Position::new(mouse.column, mouse.row)) =>
+            {
+                match mouse.kind {
+                    MouseEventKind::ScrollDown => preview.scroll_by(1),
+                    MouseEventKind::ScrollUp => preview.scroll_by(-1),
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        preview.set_rail_focused(true);
+                        preview.click_rail(mouse.row)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 
@@ -1807,6 +1944,10 @@ impl RightPane {
             }
         }
 
+        if self.handle_rail_event(event) {
+            return true;
+        }
+
         // When the overview is shown, it takes the place of the steps panel in
         // the main area, so route "Steps"-bound events to the overview instead.
         let handled = match event {
@@ -1965,6 +2106,10 @@ impl RightPane {
         if self.overview_active {
             return true;
         }
+        // The comment list beside the code holds bubbles, not markdown.
+        if self.rail_has_focus() {
+            return false;
+        }
         match self.focused {
             // Both bottom tabs (Details/Comments) are markdown panels.
             RightPaneFocus::Details => matches!(
@@ -2093,7 +2238,7 @@ mod tests {
         // With details visible, render records both the details area and the
         // details TabbedPanel's own hit-test area.
         let mut buf = Buffer::empty(area);
-        pane.render(area, &mut buf, false, DetailsPaneSize::Regular);
+        pane.render(area, &mut buf, RightPaneSize::Regular, DetailsPaneSize::Regular);
         assert!(
             !pane.last_details_area.get().is_empty(),
             "details area should be recorded when the details block is drawn",
@@ -2107,7 +2252,7 @@ mod tests {
         // both caches must be cleared or a click/scroll would still reach the
         // now-hidden Details panel through the stale areas.
         let mut buf = Buffer::empty(area);
-        pane.render(area, &mut buf, true, DetailsPaneSize::Regular);
+        pane.render(area, &mut buf, RightPaneSize::PreviewOnly, DetailsPaneSize::Regular);
         assert!(
             pane.last_details_area.get().is_empty(),
             "hidden details must clear last_details_area",
@@ -2127,7 +2272,7 @@ mod tests {
 
         // A normal render draws the Steps panel and records its hit-test area.
         let mut buf = Buffer::empty(area);
-        pane.render(area, &mut buf, false, DetailsPaneSize::Regular);
+        pane.render(area, &mut buf, RightPaneSize::Regular, DetailsPaneSize::Regular);
         assert!(
             !pane.steps.last_area().is_empty(),
             "steps area should be recorded when the steps panel is drawn",
@@ -2137,7 +2282,7 @@ mod tests {
         // area must be cleared or a click/scroll would still reach the now-hidden
         // Steps panel through its stale rectangle.
         let mut buf = Buffer::empty(area);
-        pane.render(area, &mut buf, false, DetailsPaneSize::Half);
+        pane.render(area, &mut buf, RightPaneSize::Regular, DetailsPaneSize::Half);
         assert!(
             pane.steps.last_area().is_empty(),
             "expanded details must clear the steps panel's hit-test area",

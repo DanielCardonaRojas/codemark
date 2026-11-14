@@ -2981,6 +2981,13 @@ impl BrowserLayout {
             && !self.right_pane.overview_active
     }
 
+    /// Whether keys that act on a comment thread (`r` reply, `d` delete)
+    /// reach one: the code preview, or the comment list beside it.
+    fn comment_thread_focused(&self) -> bool {
+        self.code_preview_focused()
+            || (self.focus == FocusArea::Main && self.right_pane.rail_has_focus())
+    }
+
     /// The ordered list of focusable areas in the left pane.
     ///
     /// When the left pane is expanded (Half/Full), only the panes that are
@@ -3178,12 +3185,15 @@ impl BrowserLayout {
             .constraints(left_constraints)
             .split(area);
 
-        let hide_details = self.right_pane_size.hides_details();
-
         match render_mode {
             RenderMode::Both => {
                 self.left_pane.render(chunks[0], buf);
-                self.right_pane.render(chunks[1], buf, false, self.details_pane_size);
+                self.right_pane.render(
+                    chunks[1],
+                    buf,
+                    RightPaneSize::Regular,
+                    self.details_pane_size,
+                );
             }
             RenderMode::LeftOnly => {
                 self.left_pane.render(chunks[0], buf);
@@ -3192,7 +3202,12 @@ impl BrowserLayout {
                 self.right_pane.invalidate_areas();
             }
             RenderMode::RightOnly => {
-                self.right_pane.render(chunks[0], buf, hide_details, self.details_pane_size);
+                self.right_pane.render(
+                    chunks[0],
+                    buf,
+                    self.right_pane_size,
+                    self.details_pane_size,
+                );
                 // The left pane isn't drawn; clear its children's stale hit-test
                 // areas so a click can't focus them based on the previous layout.
                 self.left_pane.invalidate_areas();
@@ -3492,6 +3507,84 @@ mod tests {
         }
         let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
         assert_eq!(preview.focused_thread_id(), Some("other"), "the clicked bubble stays selected");
+    }
+
+    #[test]
+    fn plus_reaches_a_layout_with_comments_beside_the_code() {
+        use crate::component::{InlineComment, InlineThread};
+        use ratatui::buffer::Buffer;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use ratatui::layout::Rect;
+
+        let mut layout = test_layout();
+        let area = Rect::new(0, 0, 120, 30);
+        let thread = |id: &str, line: usize, body: &str| InlineThread {
+            root_id: id.into(),
+            anchor_start: line,
+            anchor_end: line,
+            start_col: 0,
+            end_col: 4,
+            entries: vec![InlineComment {
+                author: "a".into(),
+                when: "today".into(),
+                body: body.into(),
+            }],
+        };
+        let code: String = (0..20).map(|i| format!("line{i}\n")).collect();
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        preview.set_code(code);
+        preview
+            .set_threads(vec![thread("first", 2, "first body"), thread("other", 9, "other body")]);
+        layout.set_focus(FocusArea::Main);
+        layout.right_pane.focus_steps();
+        let render = |layout: &BrowserLayout| {
+            let mut buf = Buffer::empty(area);
+            layout.render(area, &mut buf);
+            buf
+        };
+        let find = |buf: &Buffer, needle: &str| {
+            (0..area.height).find_map(|y| {
+                let row: String = (0..area.width).map(|x| buf[(x, y)].symbol()).collect();
+                row.find(needle).map(|b| (row[..b].chars().count() as u16, y))
+            })
+        };
+        let press = |layout: &mut BrowserLayout, c: char| {
+            layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)))
+        };
+        render(&layout);
+        for _ in 0..3 {
+            assert!(press(&mut layout, '+'));
+            render(&layout);
+        }
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::SideComments);
+
+        // Entering the layout shows the Comments tab, which lists the bubbles
+        // level with the code.
+        assert_eq!(layout.right_pane.details.tabs.selected_index(), 1);
+        layout.right_pane.focus_details();
+        let buf = render(&layout);
+        let (_, code_y) = find(&buf, "line2").expect("code on screen");
+        let (x, y) = find(&buf, "first body").expect("bubble in the side panel");
+        assert!(x > area.width / 2, "the bubble is on the right, at column {x}");
+        assert_eq!(y, code_y + 1, "the bubble's header is level with line2");
+        assert!(layout.right_pane.rail_has_focus());
+
+        // j / k pick threads from the side panel.
+        assert!(press(&mut layout, 'j'));
+        render(&layout);
+        let preview = layout.right_pane.steps.get_step_preview().unwrap();
+        assert_eq!(preview.focused_thread_id(), Some("first"));
+        assert!(press(&mut layout, 'j'));
+        render(&layout);
+        let preview = layout.right_pane.steps.get_step_preview().unwrap();
+        assert_eq!(preview.focused_thread_id(), Some("other"));
+
+        // `+` keeps cycling the layout from the side panel, back to Regular
+        // with the bubbles inline again.
+        assert!(press(&mut layout, '+'));
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::Regular);
+        render(&layout);
+        assert!(!layout.right_pane.steps.get_step_preview().unwrap().is_beside());
     }
 
     #[test]

@@ -797,6 +797,31 @@ impl TabbedPanel {
 
     /// Render the tabbed panel.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        let inner = self.render_frame(area, buf);
+
+        // Render active panel content (full inner area, no separate tab row)
+        let active_index = self.tabs.selected_index();
+        if let Some(panel) = self.panels.get(active_index) {
+            panel.render(inner, buf);
+        }
+        self.render_list_indicator(area, buf);
+    }
+
+    /// Render the panel's frame and tabs, then let `body` draw the inside in
+    /// place of the active tab's content.
+    pub fn render_with_body(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        body: impl FnOnce(Rect, &mut Buffer),
+    ) {
+        let inner = self.render_frame(area, buf);
+        body(inner, buf);
+    }
+
+    /// Render the border, inline tab titles and badges; returns the inner
+    /// area for the active tab's content.
+    fn render_frame(&self, area: Rect, buf: &mut Buffer) -> Rect {
         self.last_area.set(area);
 
         // For multi-select list panels, surface the number of active (selected)
@@ -891,14 +916,13 @@ impl TabbedPanel {
                 sort_icon.is_some(),
             );
         }
+        inner
+    }
 
-        // Render active panel content (full inner area, no separate tab row)
+    /// Render the `n of m` selection indicator on the bottom border of a list
+    /// tab.
+    fn render_list_indicator(&self, area: Rect, buf: &mut Buffer) {
         let active_index = self.tabs.selected_index();
-        if let Some(panel) = self.panels.get(active_index) {
-            panel.render(inner, buf);
-        }
-
-        // Render selection indicator on bottom border
         if let Some(TabContent::List(panel)) = self.panels.get(active_index)
             && !panel.is_empty()
         {

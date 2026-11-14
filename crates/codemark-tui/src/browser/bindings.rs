@@ -115,9 +115,21 @@ impl BrowserLayout {
                     bindings.push(("r", "Reply to comment"));
                     bindings.push(("E", "Edit your comment"));
                     bindings.push(("d", "Delete comment thread"));
-                    bindings.push(("z", "Fold comment / line"));
-                    bindings.push(("Z", "Fold all comments"));
+                    if self.right_pane_size.details_beside() {
+                        bindings.push(("z", "Fold thread replies"));
+                        bindings.push(("Z", "Fold all thread replies"));
+                    } else {
+                        bindings.push(("z", "Fold comment / line"));
+                        bindings.push(("Z", "Fold all comments"));
+                    }
                     bindings.push(("n/N", "Next / previous comment"));
+                }
+                if self.right_pane.rail_has_focus() {
+                    bindings.push(("j/k n/N", "Next / previous comment"));
+                    bindings.push(("r", "Reply to comment"));
+                    bindings.push(("d", "Delete comment thread"));
+                    bindings.push(("z", "Fold thread replies"));
+                    bindings.push(("Z", "Fold all thread replies"));
                 }
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {
@@ -286,6 +298,10 @@ impl BrowserLayout {
                 bindings.push(KeyBinding::new("o", "Open File").with_priority(85));
                 if self.code_preview_focused() {
                     bindings.push(KeyBinding::new("c", "Comment").with_priority(60));
+                }
+                if self.right_pane.rail_has_focus() {
+                    bindings.push(KeyBinding::new("j/k", "Comments").with_priority(62));
+                    bindings.push(KeyBinding::new("r", "Reply").with_priority(60));
                 }
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {

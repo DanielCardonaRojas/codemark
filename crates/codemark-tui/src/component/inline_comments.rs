@@ -29,6 +29,20 @@ pub struct InlineThread {
     pub entries: Vec<InlineComment>,
 }
 
+/// A thread with no place in the code: a comment on the bookmark as a
+/// whole, or one whose anchor no longer resolves. Listed beside the anchored
+/// threads in the side-by-side layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LooseThread {
+    /// Id of the thread's root comment.
+    pub root_id: String,
+    /// Why it has no place, shown in its header (`orphaned`, `suspended`);
+    /// `None` for a whole-bookmark comment.
+    pub tag: Option<&'static str>,
+    /// The root comment first, then its replies in order.
+    pub entries: Vec<InlineComment>,
+}
+
 /// One comment in a thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineComment {
@@ -65,6 +79,8 @@ pub(crate) enum BubbleLine {
     },
     /// A row of a reply's body, indented under its header.
     ReplyBody(String),
+    /// A folded thread's stand-in for its replies: `↳ N replies`.
+    Replies(usize),
     Bottom,
 }
 
@@ -119,7 +135,13 @@ pub(crate) fn build_layout(
 ) -> RowLayout {
     let bubbles: Vec<Vec<BubbleLine>> = threads
         .iter()
-        .map(|t| if folded.contains(&t.root_id) { Vec::new() } else { bubble_lines(t, text_width) })
+        .map(|t| {
+            if folded.contains(&t.root_id) {
+                Vec::new()
+            } else {
+                bubble_lines(&t.entries, None, text_width)
+            }
+        })
         .collect();
 
     // Threads below each line, in the order given.
@@ -146,12 +168,22 @@ pub(crate) fn build_layout(
     RowLayout { rows, line_row, bubbles, bubble_start }
 }
 
-fn bubble_lines(thread: &InlineThread, width: usize) -> Vec<BubbleLine> {
+/// The rows of a bubble holding `entries`, bodies wrapped to `width`. A
+/// `tag` is shown before the root's time.
+pub(crate) fn bubble_lines(
+    entries: &[InlineComment],
+    tag: Option<&str>,
+    width: usize,
+) -> Vec<BubbleLine> {
     let mut lines = Vec::new();
-    let Some((root, replies)) = thread.entries.split_first() else {
+    let Some((root, replies)) = entries.split_first() else {
         return lines;
     };
-    lines.push(BubbleLine::Top { author: root.author.clone(), when: root.when.clone() });
+    let when = match tag {
+        Some(tag) => format!("{tag} · {}", root.when),
+        None => root.when.clone(),
+    };
+    lines.push(BubbleLine::Top { author: root.author.clone(), when });
     for paragraph in root.body.lines() {
         lines.extend(wrap(paragraph, width).into_iter().map(BubbleLine::Body));
     }
@@ -165,6 +197,40 @@ fn bubble_lines(thread: &InlineThread, width: usize) -> Vec<BubbleLine> {
     }
     lines.push(BubbleLine::Bottom);
     lines
+}
+
+/// A folded thread beside the code: the root comment in full, its replies
+/// collapsed to a `↳ N replies` row. A thread without replies has nothing to
+/// fold and is shown whole.
+pub(crate) fn folded_bubble_lines(
+    entries: &[InlineComment],
+    tag: Option<&str>,
+    width: usize,
+) -> Vec<BubbleLine> {
+    let mut lines = bubble_lines(entries.get(..1).unwrap_or_default(), tag, width);
+    let replies = entries.len().saturating_sub(1);
+    if replies > 0 {
+        lines.insert(lines.len().saturating_sub(1), BubbleLine::Replies(replies));
+    }
+    lines
+}
+
+/// Rows of the side-by-side comment list at which each bubble starts.
+///
+/// Bubble `i` wants to start at row `desired[i]` (its anchor's code row) and
+/// is `heights[i]` rows tall. Bubbles keep their order and never overlap, so
+/// one that would run into the bubble above is pushed down below it.
+pub(crate) fn stack_rail(desired: &[usize], heights: &[usize]) -> Vec<usize> {
+    let mut next_free = 0;
+    desired
+        .iter()
+        .zip(heights)
+        .map(|(&want, &height)| {
+            let at = want.max(next_free);
+            next_free = at + height;
+            at
+        })
+        .collect()
 }
 
 /// Word-wrap `text` to `width` display columns; `0` means no wrapping.
@@ -279,6 +345,18 @@ pub(crate) fn render_bubble_line(
             spans.push(pad(REPLY_INDENT + text.width()));
             spans.push(Span::styled(" │", border));
         }
+        BubbleLine::Replies(count) => {
+            let label = if *count == 1 {
+                "↳ 1 reply".to_string()
+            } else {
+                format!("↳ {count} replies")
+            };
+            let label = truncate(&label, inner);
+            spans.push(Span::styled("│ ", border));
+            spans.push(Span::styled(label.clone(), Style::default().fg(style.dim)));
+            spans.push(pad(label.width()));
+            spans.push(Span::styled(" │", border));
+        }
         BubbleLine::Bottom => {
             // The key hint, shortened or left out when the box is too narrow.
             let room = box_width.saturating_sub(3);
@@ -365,6 +443,43 @@ mod tests {
         assert_eq!(layout.row_of(3), 8);
         assert_eq!(layout.rows[3], DisplayRow::Bubble { thread: 0, row: 0 });
         assert_eq!(layout.bubbles[0].len(), 5);
+    }
+
+    #[test]
+    fn rail_bubbles_sit_at_their_anchor_unless_pushed_down() {
+        // Room for both: each starts at its anchor.
+        assert_eq!(stack_rail(&[2, 10], &[3, 3]), vec![2, 10]);
+        // The second would overlap the first, so it starts right below it.
+        assert_eq!(stack_rail(&[2, 3, 4], &[3, 2, 2]), vec![2, 5, 7]);
+        assert_eq!(stack_rail(&[], &[]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn tags_lead_the_header_and_folds_keep_only_the_frame() {
+        let entries = vec![
+            InlineComment { author: "a".into(), when: "today".into(), body: "one".into() },
+            InlineComment { author: "b".into(), when: "now".into(), body: "two".into() },
+        ];
+        let lines = bubble_lines(&entries, Some("orphaned"), 40);
+        assert_eq!(
+            lines[0],
+            BubbleLine::Top { author: "a".into(), when: "orphaned · today".into() }
+        );
+        assert_eq!(
+            folded_bubble_lines(&entries, None, 40),
+            vec![
+                BubbleLine::Top { author: "a".into(), when: "today".into() },
+                BubbleLine::Body("one".into()),
+                BubbleLine::Replies(1),
+                BubbleLine::Bottom,
+            ],
+            "the root stays, its reply collapses"
+        );
+        assert_eq!(
+            folded_bubble_lines(&entries[..1], None, 40),
+            bubble_lines(&entries[..1], None, 40),
+            "nothing to fold without replies"
+        );
     }
 
     #[test]
