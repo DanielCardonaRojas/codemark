@@ -1671,6 +1671,19 @@ impl RightPane {
             .constraints([Constraint::Min(0), Constraint::Length(pager_height)])
             .split(columns[0]);
 
+        // As tall as the steps panel beside it, so the borders line up; the
+        // pager row under the steps stays empty on this side.
+        let side = Rect { height: left[0].height, ..columns[1] };
+        let list = self
+            .rail_preview()
+            .filter(|_| self.details.tabs.selected_index() == COMMENTS_TAB_INDEX);
+        // The list's width sets the preview's scroll range, so give it before
+        // the preview draws; without the list there is no extra range.
+        if let Some(preview) = self.steps.get_step_preview() {
+            let inner_width = if list.is_some() { side.width.saturating_sub(2) } else { 0 };
+            preview.set_rail_width(inner_width);
+        }
+
         self.steps.health_label.set(self.preview_health());
         self.render_steps_or_loading(left[0], buf);
         if self.pager_total > 1 {
@@ -1680,15 +1693,11 @@ impl RightPane {
             pager.render(left[1], buf);
         }
 
-        // As tall as the steps panel beside it, so the borders line up; the
-        // pager row under the steps stays empty on this side.
-        let side = Rect { height: left[0].height, ..columns[1] };
         // The steps panel drew the preview just now, so the list lines up
         // with the code as it is on screen.
         self.last_details_area.set(side);
-        let preview = self.rail_preview();
-        match preview {
-            Some(preview) if self.details.tabs.selected_index() == COMMENTS_TAB_INDEX => {
+        match list {
+            Some(preview) => {
                 self.details.render_with_body(side, buf, |inner, buf| {
                     preview.render_rail(inner, buf);
                 });

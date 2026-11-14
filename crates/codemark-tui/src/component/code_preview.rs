@@ -170,8 +170,9 @@ struct InlineState {
     /// Screen rows `(first, last)` of each anchored bubble drawn in the side
     /// panel last frame, with its thread index, for mouse hit-testing.
     rail_hits: RefCell<Vec<(u16, u16, usize)>>,
-    /// Width of the side panel last frame; `0` before it is first drawn.
-    /// Bubbles wrap to it, which sets how far the list reaches.
+    /// Width of the side panel's list this frame; `0` while it isn't shown.
+    /// Bubbles wrap to it, which sets how far the list reaches. Set by the
+    /// layout before the preview draws so both use the same scroll range.
     rail_width: Cell<u16>,
 }
 
@@ -862,9 +863,18 @@ impl CodePreview {
             && self.focused_thread().is_some_and(|t| self.inline.threads[t].entries.len() > 1)
     }
 
-    /// Clear the side panel's hit-test areas when it is not drawn.
+    /// Clear the side panel's hit-test areas and scroll range when it is
+    /// not drawn.
     pub fn invalidate_rail(&self) {
         self.inline.rail_hits.borrow_mut().clear();
+        self.inline.rail_width.set(0);
+    }
+
+    /// Width the side panel's list will be drawn at this frame, or `0` when
+    /// it isn't shown. Call before [`Component::render`]: the preview's
+    /// scroll range reaches the list's last bubble, which depends on it.
+    pub fn set_rail_width(&self, width: u16) {
+        self.inline.rail_width.set(width);
     }
 
     /// Pick the thread whose bubble the side panel drew at screen row `y`.
@@ -993,7 +1003,6 @@ impl CodePreview {
         let code_area = self.last_area.get();
         let focused = self.focused_thread();
 
-        self.inline.rail_width.set(area.width);
         let offset = self.visible_offset();
         let (items, starts) = self.rail_items();
         // How far the picked bubble was pushed below its code: shift the whole
@@ -2708,6 +2717,7 @@ mod tests {
         let area = Rect { x: 0, y: 0, width: code_width + rail_width, height };
         let mut buf = Buffer::empty(area);
         preview.set_beside(true);
+        preview.set_rail_width(rail_width);
         preview.render(Rect { width: code_width, ..area }, &mut buf);
         preview.render_rail(Rect { x: code_width, width: rail_width, ..area }, &mut buf);
         buf
@@ -2900,5 +2910,32 @@ mod tests {
         assert_eq!(preview.focused_thread_id(), Some("inner"));
         assert!(preview.handle_event(&key(KeyCode::Char('N'))));
         assert_eq!(preview.focused_thread_id(), Some("outer"));
+    }
+
+    #[test]
+    fn the_first_frame_lines_the_list_up_with_the_code() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        let long: Vec<String> = (0..5).map(|i| format!("paragraph {i}")).collect();
+        preview.set_threads(vec![thread("end", 9, 9, &[&long.join("\n")])]);
+        // Scrolled to the end before anything was drawn.
+        preview.jump_to_line(9);
+        let buf = render_beside(&preview, 30, 44, 8);
+        let code_y = (0..8).find(|&y| row_text(&buf, y).contains("line9")).expect("line9 shown");
+        assert!(row_from(&buf, 30, code_y).contains("┌ claude"), "header level with line9");
+    }
+
+    #[test]
+    fn without_the_list_the_code_scrolls_only_to_its_end() {
+        let mut preview = CodePreview::new(numbered_code(4), "txt");
+        let long: Vec<String> = (0..12).map(|i| format!("paragraph {i}")).collect();
+        preview.set_threads(vec![thread("tall", 1, 1, &[&long.join("\n")])]);
+        render_beside(&preview, 30, 44, 6);
+        // The layout hides the list (e.g. the Details tab is shown instead).
+        preview.invalidate_rail();
+        preview.render(
+            Rect { x: 0, y: 0, width: 30, height: 6 },
+            &mut Buffer::empty(Rect::new(0, 0, 30, 6)),
+        );
+        assert!(!preview.scroll_by(1), "four lines fit: nothing to scroll");
     }
 }
