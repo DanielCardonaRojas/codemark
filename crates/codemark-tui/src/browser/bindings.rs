@@ -127,6 +127,7 @@ impl BrowserLayout {
                 if self.right_pane.rail_has_focus() {
                     bindings.push(("j/k n/N", "Next / previous comment"));
                     bindings.push(("r", "Reply to comment"));
+                    bindings.push(("E", "Edit your comment"));
                     bindings.push(("d", "Delete comment thread"));
                     bindings.push(("z", "Fold thread replies"));
                     bindings.push(("Z", "Fold all thread replies"));

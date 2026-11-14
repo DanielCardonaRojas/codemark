@@ -457,8 +457,18 @@ mod tests {
     #[test]
     fn tags_lead_the_header_and_folds_keep_only_the_frame() {
         let entries = vec![
-            InlineComment { author: "a".into(), when: "today".into(), body: "one".into() },
-            InlineComment { author: "b".into(), when: "now".into(), body: "two".into() },
+            InlineComment {
+                id: "1".into(),
+                author: "a".into(),
+                when: "today".into(),
+                body: "one".into(),
+            },
+            InlineComment {
+                id: "2".into(),
+                author: "b".into(),
+                when: "now".into(),
+                body: "two".into(),
+            },
         ];
         let lines = bubble_lines(&entries, Some("orphaned"), 40);
         assert_eq!(

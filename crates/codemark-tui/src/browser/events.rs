@@ -1400,7 +1400,7 @@ impl BrowserLayout {
             // in it (`e` is the end-of-word motion there).
             ratatui::crossterm::event::KeyCode::Char('E')
                 if self.should_handle_keybindings()
-                    && self.code_preview_focused()
+                    && self.comment_thread_focused()
                     && self.open_edit_draft() =>
             {
                 return Some(true);

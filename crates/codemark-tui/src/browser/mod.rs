@@ -2981,7 +2981,7 @@ impl BrowserLayout {
             && !self.right_pane.overview_active
     }
 
-    /// Whether keys that act on a comment thread (`r` reply, `d` delete)
+    /// Whether keys that act on a comment thread (`r` reply, `E` edit, `d` delete)
     /// reach one: the code preview, or the comment list beside it.
     fn comment_thread_focused(&self) -> bool {
         self.code_preview_focused()
@@ -3525,6 +3525,7 @@ mod tests {
             start_col: 0,
             end_col: 4,
             entries: vec![InlineComment {
+                id: format!("{id}-root"),
                 author: "a".into(),
                 when: "today".into(),
                 body: body.into(),
