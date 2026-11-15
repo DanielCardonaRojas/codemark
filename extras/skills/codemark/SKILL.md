@@ -681,7 +681,7 @@ codemark comment rm <comment-id>
 
 ### Live threads (experimental): answer the user's replies as they come
 When you run with the codemark channel (Claude Code) or the pi extension, you have a codemark *agent session*. Threads you start through it are **live**: when the user replies in the TUI, the reply is pushed to you and the TUI shows a spinner until you answer.
-- **Claude Code**: use the `codemark_comment` and `codemark_reply` tools from the `codemark` MCP server. Replies arrive as `<channel source="codemark" thread_id="...">`; answer with `codemark_reply`, passing that `thread_id`. Call `codemark_inbox` if you suspect replies were missed.
+- **Claude Code**: use the `codemark_comment` and `codemark_reply` tools from the `codemark` MCP server. Channel pushes can be dropped silently (channels may be "configured but not active"), so as soon as the session starts run the watcher command from the server instructions (`codemark agent watch --session <id> --oneline ...`) under the Monitor tool and re-arm it when it expires; each line is one reply, and replies that arrived meanwhile are re-sent on restart. While it runs the channel stays quiet, so nothing arrives twice. Answer with `codemark_reply`, passing the `thread_id`. Call `codemark_inbox` if you suspect replies were missed.
 - **CLI**: pass your session id (given in the server instructions) to bind a thread or answer as the session:
 ```bash
 codemark comment add <bookmark-id> --range 57 --body "..." --created-by claude --session <session-id>
