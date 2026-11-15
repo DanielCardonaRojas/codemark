@@ -98,11 +98,13 @@ impl CommentDraft {
         }
     }
 
-    fn context(&self) -> String {
+    /// A line above the body saying what the draft is for. New comments have
+    /// none: the code they target is highlighted right behind the modal.
+    fn context(&self) -> Option<&'static str> {
         match &self.kind {
-            DraftKind::Anchored(anchor) => format!("On {}", anchor.anchor_hint),
-            DraftKind::Reply { .. } => "Replying to the comment under the cursor".to_string(),
-            DraftKind::Edit { .. } => "Editing your comment".to_string(),
+            DraftKind::Anchored(_) => None,
+            DraftKind::Reply { .. } => Some("Replying to the comment under the cursor"),
+            DraftKind::Edit { .. } => Some("Editing your comment"),
         }
     }
 }
@@ -411,11 +413,13 @@ impl BrowserLayout {
         // `Paragraph::wrap`, so the cursor's row is known exactly and the
         // caret cell past a full line's end isn't dropped at the wrap.
         let width = inner.width as usize;
-        let header = Paragraph::new(vec![
-            Line::from(Span::styled(draft.context(), Style::default().fg(palette.dim))),
-            tab_bar,
-        ])
-        .wrap(Wrap { trim: false });
+        let header_lines: Vec<Line> = draft
+            .context()
+            .map(|c| Line::from(Span::styled(c, Style::default().fg(palette.dim))))
+            .into_iter()
+            .chain(std::iter::once(tab_bar))
+            .collect();
+        let header = Paragraph::new(header_lines).wrap(Wrap { trim: false });
         let header_rows = header.line_count(inner.width).min(inner.height as usize);
         header.render(Rect { height: header_rows as u16, ..inner }, buf);
         let body_area = Rect {
@@ -698,6 +702,7 @@ mod tests {
         let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
         assert!(rendered_text(&layout).contains("Tab query"));
         assert!(!rendered_text(&layout).contains("(call_expression"));
+        assert!(!rendered_text(&layout).contains("ping();"), "no header echoing the target code");
 
         layout.handle_event(&key(KeyCode::Tab));
         let shown = rendered_text(&layout);
