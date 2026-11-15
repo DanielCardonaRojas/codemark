@@ -325,27 +325,21 @@ impl BrowserLayout {
         let new_comment = || BookmarkComment::new(&draft.bookmark_id, comment_author(), &body);
         // `(success, message)` once written; the modal then closes.
         let written = match &draft.kind {
+            // A new thread that @mentions an agent becomes that agent's; a
+            // reply goes to the thread's agent and any it mentions. Queued in
+            // the same transaction (see `Database::insert_comment_routed`).
             DraftKind::Anchored(anchor) => {
                 let comment = new_comment().with_anchor(anchor.clone());
-                db.insert_comment(&comment).map(|()| {
-                    tracing::debug!(target: "codemark::comments", id = %comment.id, "comment saved from TUI");
-                    (true, "Comment added".to_string())
+                db.insert_comment_routed(&comment, &comment.id).map(|routed| {
+                    tracing::debug!(target: "codemark::comments", id = %comment.id, agents = routed.sessions.len(), "comment saved from TUI");
+                    (true, routed_message(&routed))
                 })
             }
-            // A reply on an agent-owned thread is queued for that agent in the
-            // same transaction (see `codemark_core::engine::agent`).
             DraftKind::Reply { root_id } => {
                 let comment = BookmarkComment { parent_id: Some(root_id.clone()), ..new_comment() };
-                db.insert_reply_with_delivery(&comment, root_id).map(|delivery| {
-                    tracing::debug!(target: "codemark::comments", id = %comment.id, "reply saved from TUI");
-                    let message = match delivery
-                        .and_then(|d| db.get_agent_session(&d.session_id).ok().flatten())
-                    {
-                        Some(s) if s.is_live() => format!("Reply sent to {}", s.display_name()),
-                        Some(s) => format!("Reply saved; {} is offline", s.display_name()),
-                        None => "Comment added".into(),
-                    };
-                    (true, message)
+                db.insert_comment_routed(&comment, root_id).map(|routed| {
+                    tracing::debug!(target: "codemark::comments", id = %comment.id, agents = routed.sessions.len(), "reply saved from TUI");
+                    (true, routed_message(&routed))
                 })
             }
             DraftKind::Edit { comment_id } => db.update_comment_body(comment_id, &body).map(|found| {
@@ -582,8 +576,57 @@ fn comment_author() -> String {
         .unwrap_or_else(|| "user".to_string())
 }
 
+/// The toast after saving a comment: which agents it went to, which are
+/// offline, and which `@names` matched no running agent.
+fn routed_message(routed: &codemark_core::storage::agent_repo::Routed) -> String {
+    let names = |live: bool| -> Vec<&str> {
+        routed.sessions.iter().filter(|s| s.is_live() == live).map(|s| s.display_name()).collect()
+    };
+    let (live, offline) = (names(true), names(false));
+    let mut parts = Vec::new();
+    if !live.is_empty() {
+        parts.push(format!("Sent to {}", live.join(", ")));
+    }
+    if !offline.is_empty() {
+        let lead = if live.is_empty() { "Saved; " } else { "" };
+        let verb = if offline.len() == 1 { "is" } else { "are" };
+        parts.push(format!("{lead}{} {verb} offline", offline.join(", ")));
+    }
+    if parts.is_empty() {
+        parts.push("Comment added".into());
+    }
+    if !routed.unmatched.is_empty() {
+        let names: Vec<String> = routed.unmatched.iter().map(|n| format!("@{n}")).collect();
+        parts.push(format!("no running agent answers to {}", names.join(", ")));
+    }
+    parts.join("; ")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn routed_message_names_agents_offline_and_unknown() {
+        use codemark_core::engine::agent::AgentSession;
+        use codemark_core::storage::agent_repo::Routed;
+        let live = AgentSession::new("claude-code", Some("claude".into()));
+        let offline = AgentSession {
+            heartbeat_at: "2026-01-01T00:00:00.000Z".into(),
+            ..AgentSession::new("codex", None)
+        };
+        let routed = |sessions: Vec<AgentSession>, unmatched: &[&str]| Routed {
+            sessions,
+            deliveries: Vec::new(),
+            unmatched: unmatched.iter().map(|s| s.to_string()).collect(),
+        };
+        assert_eq!(routed_message(&routed(vec![], &[])), "Comment added");
+        assert_eq!(routed_message(&routed(vec![live.clone()], &[])), "Sent to claude");
+        assert_eq!(routed_message(&routed(vec![offline.clone()], &[])), "Saved; codex is offline");
+        assert_eq!(
+            routed_message(&routed(vec![live, offline], &["gemini"])),
+            "Sent to claude; codex is offline; no running agent answers to @gemini"
+        );
+    }
+
     use super::*;
 
     #[test]

@@ -7,13 +7,24 @@ use std::collections::HashMap;
 
 use rusqlite::{OptionalExtension, Row, params};
 
-use crate::engine::agent::{AgentSession, Delivery, DeliveryStatus, ThreadAgentState, now_rfc3339};
+use crate::engine::agent::{
+    AgentSession, Delivery, DeliveryStatus, ThreadAgentState, answers_to, mentions, now_rfc3339,
+};
 use crate::engine::bookmark::BookmarkComment;
 use crate::error::{Error, Result};
 use crate::storage::db::Database;
 
-const SESSION_COLS: &str =
-    "id, kind, label, external_ref, pid, started_at, heartbeat_at, ended_at, watcher_heartbeat_at";
+/// Where [`Database::insert_comment_routed`] sent a comment.
+#[derive(Debug, Clone, Default)]
+pub struct Routed {
+    /// The sessions it was queued for, matching `deliveries`.
+    pub sessions: Vec<AgentSession>,
+    pub deliveries: Vec<Delivery>,
+    /// `@names` that matched no running agent session.
+    pub unmatched: Vec<String>,
+}
+
+const SESSION_COLS: &str = "id, kind, label, external_ref, pid, started_at, heartbeat_at, ended_at, watcher_heartbeat_at, push";
 const DELIVERY_COLS: &str = "id, comment_id, thread_id, session_id, status, created_at, \
      delivered_at, answered_at, answer_comment_id, error";
 
@@ -28,6 +39,7 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<AgentSession> {
         heartbeat_at: row.get(6)?,
         ended_at: row.get(7)?,
         watcher_heartbeat_at: row.get(8)?,
+        push: row.get(9)?,
     })
 }
 
@@ -61,7 +73,7 @@ impl Database {
     pub fn insert_agent_session(&self, s: &AgentSession) -> Result<()> {
         self.conn().execute(
             &format!(
-                "INSERT INTO agent_sessions ({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)"
+                "INSERT INTO agent_sessions ({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
             ),
             params![
                 s.id,
@@ -72,7 +84,8 @@ impl Database {
                 s.started_at,
                 s.heartbeat_at,
                 s.ended_at,
-                s.watcher_heartbeat_at
+                s.watcher_heartbeat_at,
+                s.push
             ],
         )?;
         tracing::debug!(target: "codemark::agent", id = %s.id, kind = %s.kind, "session registered");
@@ -180,12 +193,19 @@ impl Database {
                 .query_row(
                     &format!(
                         "SELECT {DELIVERY_COLS} FROM agent_deliveries WHERE thread_id = ?1
-                         ORDER BY created_at DESC LIMIT 1"
+                         ORDER BY created_at DESC, rowid DESC LIMIT 1"
                     ),
                     [root],
                     delivery_from_row,
                 )
                 .optional()?;
+            // A one-off @mention waits on the mentioned agent, not the owner.
+            let session = match &latest {
+                Some(d) if d.session_id != session.id => {
+                    self.get_agent_session(&d.session_id)?.unwrap_or(session)
+                }
+                _ => session,
+            };
             out.insert(root.to_string(), ThreadAgentState { session, latest });
         }
         Ok(out)
@@ -193,30 +213,77 @@ impl Database {
 
     // ── deliveries ──────────────────────────────────────────────────────
 
-    /// Insert a user's reply and, when its thread is bound to an agent
-    /// session, a queued delivery for it, in one transaction. Returns the
-    /// delivery, or `None` for a thread no agent owns.
+    /// The session `@name` refers to: a running (not ended) session whose
+    /// label or kind is `name`, the live one with the freshest heartbeat
+    /// first. `None` when no such session exists.
+    pub fn mentioned_session(&self, name: &str) -> Result<Option<AgentSession>> {
+        Ok(self
+            .list_agent_sessions(false)?
+            .into_iter()
+            .filter(|s| answers_to(s, name))
+            .max_by(|a, b| (a.is_live(), &a.heartbeat_at).cmp(&(b.is_live(), &b.heartbeat_at))))
+    }
+
+    /// Insert a person's comment in the thread rooted at `root_id` (the
+    /// comment itself for a new thread) and queue it for the agents it
+    /// concerns, in one transaction:
+    ///
+    /// - a reply goes to the session that owns the thread;
+    /// - each `@name` in the body goes to that agent's session. A thread no
+    ///   agent owns becomes the first mentioned agent's; on an owned thread
+    ///   a mention is a one-off delivery and ownership stays put.
+    pub fn insert_comment_routed(
+        &self,
+        comment: &BookmarkComment,
+        root_id: &str,
+    ) -> Result<Routed> {
+        let tx = self.conn().unchecked_transaction()?;
+        self.insert_comment(comment)?;
+        let mut owner = self.agent_session_for_thread(root_id)?;
+        let mut targets: Vec<AgentSession> = Vec::new();
+        if comment.id != root_id
+            && let Some(o) = &owner
+        {
+            targets.push(o.clone());
+        }
+        let mut unmatched = Vec::new();
+        for name in mentions(&comment.body) {
+            let Some(session) = self.mentioned_session(&name)? else {
+                unmatched.push(name);
+                continue;
+            };
+            if owner.is_none() {
+                self.bind_agent_thread(root_id, &session.id)?;
+                owner = Some(session.clone());
+            }
+            if !targets.iter().any(|t| t.id == session.id) {
+                targets.push(session);
+            }
+        }
+        let mut deliveries = Vec::with_capacity(targets.len());
+        for t in &targets {
+            let d = Delivery::new(&comment.id, root_id, &t.id);
+            self.insert_delivery(&d)?;
+            deliveries.push(d);
+        }
+        tx.commit()?;
+        for d in &deliveries {
+            tracing::debug!(target: "codemark::agent", delivery = %d.id, session = %d.session_id, thread = root_id, "comment queued for agent");
+        }
+        if !unmatched.is_empty() {
+            tracing::debug!(target: "codemark::agent", ?unmatched, "mentions with no agent session");
+        }
+        Ok(Routed { sessions: targets, deliveries, unmatched })
+    }
+
+    /// Insert a user's reply, routed as [`Self::insert_comment_routed`].
+    /// Returns the first delivery (the owner's, when the thread has one).
     pub fn insert_reply_with_delivery(
         &self,
         reply: &BookmarkComment,
         root_id: &str,
     ) -> Result<Option<Delivery>> {
-        let tx = self.conn().unchecked_transaction()?;
-        self.insert_comment(reply)?;
-        let session = self.agent_session_for_thread(root_id)?;
-        let delivery = match session {
-            Some(s) => {
-                let d = Delivery::new(&reply.id, root_id, &s.id);
-                self.insert_delivery(&d)?;
-                Some(d)
-            }
-            None => None,
-        };
-        tx.commit()?;
-        if let Some(d) = &delivery {
-            tracing::debug!(target: "codemark::agent", delivery = %d.id, session = %d.session_id, "reply queued for agent");
-        }
-        Ok(delivery)
+        Ok(self.insert_comment_routed(reply, root_id)?.deliveries.into_iter().next())
     }
 
     pub fn insert_delivery(&self, d: &Delivery) -> Result<()> {
@@ -361,6 +428,17 @@ mod tests {
     }
 
     #[test]
+    fn push_round_trips_through_the_database() {
+        let db = Database::open_in_memory().unwrap();
+        let pull = AgentSession::new("codex", None).with_push(false);
+        let push = AgentSession::new("claude-code", None);
+        db.insert_agent_session(&pull).unwrap();
+        db.insert_agent_session(&push).unwrap();
+        assert!(!db.get_agent_session(&pull.id).unwrap().unwrap().push);
+        assert!(db.get_agent_session(&push.id).unwrap().unwrap().push);
+    }
+
+    #[test]
     fn reply_on_bound_thread_queues_and_answer_closes_it() {
         let db = Database::open_in_memory().unwrap();
         let bm = bookmark(&db);
@@ -417,5 +495,85 @@ mod tests {
         };
         assert!(db.insert_reply_with_delivery(&reply, &root.id).unwrap().is_none());
         assert!(db.agent_thread_states(&[root.id.as_str()]).unwrap().is_empty());
+    }
+
+    fn session(db: &Database, kind: &str, label: &str) -> AgentSession {
+        let s = AgentSession::new(kind, Some(label.into()));
+        db.insert_agent_session(&s).unwrap();
+        s
+    }
+
+    fn reply_to(root: &BookmarkComment, body: &str) -> BookmarkComment {
+        BookmarkComment {
+            parent_id: Some(root.id.clone()),
+            ..BookmarkComment::new(&root.bookmark_id, "daniel", body)
+        }
+    }
+
+    #[test]
+    fn a_mention_in_a_new_thread_gives_it_to_that_agent() {
+        let db = Database::open_in_memory().unwrap();
+        let bm = bookmark(&db);
+        let claude = session(&db, "claude-code", "claude");
+        session(&db, "codex", "codex");
+
+        let root = BookmarkComment::new(&bm.id, "daniel", "@claude does this follow a convention?");
+        let routed = db.insert_comment_routed(&root, &root.id).unwrap();
+        assert_eq!(routed.deliveries.len(), 1);
+        assert_eq!(routed.deliveries[0].session_id, claude.id);
+        assert_eq!(routed.deliveries[0].comment_id, root.id);
+        assert!(routed.unmatched.is_empty());
+        assert_eq!(db.agent_session_for_thread(&root.id).unwrap().unwrap().id, claude.id);
+
+        // Later replies need no mention: the thread is claude's now.
+        let d = db.insert_reply_with_delivery(&reply_to(&root, "and why?"), &root.id).unwrap();
+        assert_eq!(d.unwrap().session_id, claude.id);
+    }
+
+    #[test]
+    fn a_mention_on_an_owned_thread_is_one_off_and_keeps_the_owner() {
+        let db = Database::open_in_memory().unwrap();
+        let bm = bookmark(&db);
+        let claude = session(&db, "claude-code", "claude");
+        let codex = session(&db, "codex", "codex");
+        let root = BookmarkComment::new(&bm.id, "claude", "This arm swallows EOF");
+        db.insert_comment(&root).unwrap();
+        db.bind_agent_thread(&root.id, &claude.id).unwrap();
+
+        let routed =
+            db.insert_comment_routed(&reply_to(&root, "@codex do you agree?"), &root.id).unwrap();
+        let to: Vec<&str> = routed.deliveries.iter().map(|d| d.session_id.as_str()).collect();
+        assert_eq!(to, [claude.id.as_str(), codex.id.as_str()]);
+        assert_eq!(db.agent_session_for_thread(&root.id).unwrap().unwrap().id, claude.id);
+        // The status row names the agent the newest delivery waits on.
+        let state = &db.agent_thread_states(&[root.id.as_str()]).unwrap()[&root.id];
+        assert_eq!(state.session.id, codex.id);
+    }
+
+    #[test]
+    fn unknown_and_ended_agents_are_unmatched() {
+        let db = Database::open_in_memory().unwrap();
+        let bm = bookmark(&db);
+        let gone = session(&db, "codex", "codex");
+        db.end_agent_session(&gone.id).unwrap();
+        let root = BookmarkComment::new(&bm.id, "daniel", "@codex @gemini anyone?");
+        let routed = db.insert_comment_routed(&root, &root.id).unwrap();
+        assert!(routed.deliveries.is_empty());
+        assert_eq!(routed.unmatched, ["codex", "gemini"]);
+        assert!(db.agent_session_for_thread(&root.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_mention_prefers_the_live_session() {
+        let db = Database::open_in_memory().unwrap();
+        let stale = AgentSession {
+            heartbeat_at: "2026-01-01T00:00:00.000Z".into(),
+            ..AgentSession::new("claude-code", Some("claude".into()))
+        };
+        db.insert_agent_session(&stale).unwrap();
+        let live = session(&db, "claude-code", "claude");
+        assert_eq!(db.mentioned_session("claude").unwrap().unwrap().id, live.id);
+        assert_eq!(db.mentioned_session("CLAUDE-code").unwrap().unwrap().id, live.id);
+        assert!(db.mentioned_session("codex").unwrap().is_none());
     }
 }

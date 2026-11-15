@@ -98,11 +98,16 @@ async fn handle_add(cli: &Cli, mode: &OutputMode, args: &CommentAddArgs) -> Resu
         comment = comment.with_anchor(anchor_for_range(&bm, db, range).await?);
     }
     let session = args.session.as_deref().map(|id| require_session(db, id)).transpose()?;
-    db.insert_comment(&comment)?;
-    tracing::debug!(target: "codemark::comments", id = %comment.id, anchored = comment.is_anchored(), "comment added");
-    if let Some(session) = session {
-        db.bind_agent_thread(&comment.id, &session.id)?;
+    match session {
+        // An agent starting a thread: it owns it.
+        Some(session) => {
+            db.insert_comment(&comment)?;
+            db.bind_agent_thread(&comment.id, &session.id)?;
+        }
+        // A person: an @mention hands the new thread to that agent.
+        None => report_routing(&db.insert_comment_routed(&comment, &comment.id)?),
     }
+    tracing::debug!(target: "codemark::comments", id = %comment.id, anchored = comment.is_anchored(), "comment added");
 
     let view = CommentView::fresh(&comment);
     write_one(mode, &view, "Added comment")
@@ -126,10 +131,11 @@ async fn handle_reply(cli: &Cli, mode: &OutputMode, args: &CommentReplyArgs) -> 
             let root = reply.parent_id.clone().unwrap_or_default();
             db.insert_agent_answer(&reply, &root, &session.id)?;
         }
-        // A person replying: queue it for the agent that owns the thread.
+        // A person replying: queue it for the agent that owns the thread
+        // and any agent it @mentions.
         None => {
             let root = reply.parent_id.clone().unwrap_or_default();
-            db.insert_reply_with_delivery(&reply, &root)?;
+            report_routing(&db.insert_comment_routed(&reply, &root)?);
         }
     }
     let view = CommentView::fresh(&reply);
@@ -270,6 +276,18 @@ async fn handle_reanchor(cli: &Cli, mode: &OutputMode, args: &CommentReanchorArg
         &view,
         if anchor.is_some() { "Re-anchored comment" } else { "Detached comment" },
     )
+}
+
+/// Say on stderr which agents a person's comment was sent to, and which
+/// `@names` matched no running agent (stdout stays the command's output).
+fn report_routing(routed: &codemark_core::storage::agent_repo::Routed) {
+    for s in &routed.sessions {
+        let state = if s.is_live() { "" } else { " (offline: delivered when it reconnects)" };
+        eprintln!("codemark: sent to {}{state}", s.display_name());
+    }
+    for name in &routed.unmatched {
+        eprintln!("codemark: no running agent answers to @{name}");
+    }
 }
 
 /// The agent session `id`, or an error naming it.

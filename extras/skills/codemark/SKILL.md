@@ -680,15 +680,19 @@ codemark comment rm <comment-id>
 - **orphaned** means the bookmark resolves but the commented code is gone: re-anchor or detach it. **suspended** means the bookmark itself is broken; heal the bookmark first.
 
 ### Live threads (experimental): answer the user's replies as they come
-When you run with the codemark channel (Claude Code) or the pi extension, you have a codemark *agent session*. Threads you start through it are **live**: when the user replies in the TUI, the reply is pushed to you and the TUI shows a spinner until you answer.
-- **Claude Code**: use the `codemark_comment` and `codemark_reply` tools from the `codemark` MCP server. Channel pushes can be dropped silently (channels may be "configured but not active"), so as soon as the session starts run the watcher command from the server instructions (`codemark agent watch --session <id> --oneline ...`) under the Monitor tool and re-arm it when it expires; each line is one reply, and replies that arrived meanwhile are re-sent on restart. While it runs the channel stays quiet, so nothing arrives twice. Answer with `codemark_reply`, passing the `thread_id`. Call `codemark_inbox` if you suspect replies were missed.
-- **CLI**: pass your session id (given in the server instructions) to bind a thread or answer as the session:
+When the `codemark` MCP server is configured (or you run the pi extension), you have a codemark *agent session*. Threads you start through it are yours: when the user replies in the TUI, the reply is routed to you and the TUI shows its status until you answer. The user can also hand you a thread by `@mentioning` your name (your session's label, such as `@claude`, or its kind): a new thread that mentions you becomes yours, and a mention on another agent's thread reaches you once without changing its owner. Mentions arrive like replies (`codemark mention ...` on the watcher, "mentioned you" in the inbox); answer them with `codemark_reply` the same way.
+- **Tools** (every agent): `codemark_comment` starts a thread, `codemark_reply` answers one (pass the `thread_id`), `codemark_bind_thread` takes over an existing thread, `codemark_inbox` fetches replies you haven't answered.
+- **Claude Code** (pushed): channel pushes can be dropped silently (channels may be "configured but not active"), so as soon as the session starts run the watcher command from the server instructions (`codemark agent watch --session <id> --oneline ...`) under the Monitor tool and re-arm it when it expires; each line is one reply, and replies that arrived meanwhile are re-sent on restart. While it runs the channel stays quiet, so nothing arrives twice.
+- **Codex, Gemini CLI, other MCP clients** (pulled): nothing is pushed. Call `codemark_inbox` when you start working in the repo and whenever the user mentions a codemark comment or reply; until then the TUI shows "waiting for <agent>'s next turn".
+- **CLI only, no MCP server**: register a session and use it for every thread and answer:
 ```bash
-codemark comment add <bookmark-id> --range 57 --body "..." --created-by claude --session <session-id>
-codemark comment reply <comment-id> --body "..." --created-by claude --session <session-id>
+codemark agent register --label codex            # prints <session-id>
+codemark comment add <bookmark-id> --range 57 --body "..." --created-by codex --session <session-id>
+codemark agent inbox --session <session-id>       # claim waiting replies
+codemark comment reply <comment-id> --body "..." --created-by codex --session <session-id>
 ```
 - Keep answers short, like a code-review reply, and say so if you changed code because of the reply.
-- Setup for the user: `codemark agent setup claude`, then `claude --dangerously-load-development-channels server:codemark` (channels are a research preview).
+- Setup for the user: `codemark agent setup claude` (then `claude --dangerously-load-development-channels server:codemark`; channels are a research preview), `codemark agent setup codex` (adds the server to `~/.codex/config.toml`), or `codemark agent setup gemini` (writes `.gemini/settings.json`). Any other MCP client: run `codemark agent mcp <agent-name>` as a stdio server.
 
 ### Health and maintenance
 ```bash

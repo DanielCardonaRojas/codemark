@@ -131,6 +131,7 @@ fn merge_globals(cli: &mut Cli) {
             crate::cli::AgentCommand::Watch(a) => g_dbformat(&a.db),
             crate::cli::AgentCommand::Inbox(a) => g_dbformat(&a.db),
             crate::cli::AgentCommand::Channel(a) => g_dbformat(&a.db),
+            crate::cli::AgentCommand::Mcp(a) => g_dbformat(&a.db),
             crate::cli::AgentCommand::Setup(_) => g_none(),
         },
         #[cfg(feature = "semantic")]

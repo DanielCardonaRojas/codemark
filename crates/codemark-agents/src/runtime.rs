@@ -25,6 +25,8 @@ const THREAD_HISTORY_BYTES: usize = 4 * 1024;
 /// line, and what the Claude channel turns into a `<channel>` event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeliveryEvent {
+    /// `reply` (a reply on a thread the session owns) or `mention` (the
+    /// comment @mentioned the session's agent).
     #[serde(rename = "type")]
     pub kind: String,
     pub delivery_id: String,
@@ -61,8 +63,9 @@ pub fn register_session(
     kind: &str,
     label: Option<String>,
     external_ref: Option<String>,
+    push: bool,
 ) -> Result<AgentSession> {
-    let mut session = AgentSession::new(kind, label);
+    let mut session = AgentSession::new(kind, label).with_push(push);
     session.external_ref = external_ref;
     db.insert_agent_session(&session)?;
     Ok(session)
@@ -99,8 +102,12 @@ pub fn build_event(db: &Database, delivery: &Delivery) -> Result<DeliveryEvent> 
         thread.drain(1..keep_from);
     }
 
+    // A new thread, or one another session owns, reached this one by @name.
+    let owns = db.agent_session_for_thread(&root.id)?.is_some_and(|s| s.id == delivery.session_id);
+    let kind = if reply.id == root.id || !owns { "mention" } else { "reply" };
+
     Ok(DeliveryEvent {
-        kind: "reply".into(),
+        kind: kind.into(),
         delivery_id: delivery.id.clone(),
         session_id: delivery.session_id.clone(),
         thread_id: root.id.clone(),
@@ -160,6 +167,29 @@ pub fn open_events(db: &Database, session_id: &str) -> Result<Vec<DeliveryEvent>
     }
     events.extend(claim_pending(db, session_id)?);
     Ok(events)
+}
+
+/// What an agent reads for `event`: who replied where, the reply, and the
+/// thread so far.
+pub fn describe_event(event: &DeliveryEvent) -> String {
+    let what = match (event.kind.as_str(), event.comment_id == event.thread_id) {
+        ("mention", true) => "mentioned you in a new codemark thread",
+        ("mention", false) => "mentioned you in a codemark thread",
+        _ => "replied in a codemark thread you own",
+    };
+    let mut content = format!("{} {what} on `{}`", event.author, event.bookmark.file);
+    if let Some(hint) = &event.anchor_hint {
+        content.push_str(&format!(" ({hint})"));
+    }
+    content.push_str(":\n\n");
+    content.push_str(&event.body);
+    if !event.thread.is_empty() {
+        content.push_str("\n\nThread so far:");
+        for e in &event.thread {
+            content.push_str(&format!("\n> {}: {}", e.author, e.body.replace('\n', "\n>   ")));
+        }
+    }
+    content
 }
 
 /// Resolve a thread id (full or unambiguous prefix, root or any reply) to
@@ -259,8 +289,10 @@ pub fn watch_loop(
 /// the body are flattened so one reply is one line.
 pub fn format_oneline(event: &DeliveryEvent) -> String {
     let flat = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut line =
-        format!("codemark reply thread_id={} file={}", event.thread_id, event.bookmark.file);
+    let mut line = format!(
+        "codemark {} thread_id={} file={}",
+        event.kind, event.thread_id, event.bookmark.file
+    );
     if let Some(hint) = &event.anchor_hint {
         line.push_str(&format!(" at=\"{}\"", flat(hint).replace('"', "'")));
     }
@@ -312,7 +344,8 @@ pub(crate) mod tests {
             comments: vec![],
         };
         db.insert_bookmark(&bm).unwrap();
-        let session = register_session(&db, "claude-code", Some("claude".into()), None).unwrap();
+        let session =
+            register_session(&db, "claude-code", Some("claude".into()), None, true).unwrap();
         let root = BookmarkComment {
             anchor_hint: Some("L43-L47: match tokens.peek() {".into()),
             ..BookmarkComment::new(&bm.id, "claude", "This arm swallows EOF.")
@@ -365,6 +398,22 @@ pub(crate) mod tests {
         assert!(!line.contains('\n'), "{line}");
         assert!(line.contains(&format!("thread_id={}", root.id)), "{line}");
         assert!(line.contains("daniel: two lines"), "{line}");
+        assert!(line.starts_with("codemark reply "), "{line}");
+    }
+
+    #[test]
+    fn a_new_thread_that_mentions_the_agent_arrives_as_a_mention() {
+        let (db, session, root) = seeded();
+        let ask = BookmarkComment::new(&root.bookmark_id, "daniel", "@claude is this O(n)?");
+        let routed = db.insert_comment_routed(&ask, &ask.id).unwrap();
+        assert_eq!(routed.deliveries[0].session_id, session.id);
+        let e = claim_pending(&db, &session.id).unwrap().remove(0);
+        assert_eq!(e.kind, "mention");
+        assert_eq!(e.thread_id, ask.id);
+        assert!(format_oneline(&e).starts_with("codemark mention "));
+        let text = describe_event(&e);
+        assert!(text.contains("daniel mentioned you in a new codemark thread"), "{text}");
+        assert!(text.contains("is this O(n)?"), "{text}");
     }
 
     #[test]

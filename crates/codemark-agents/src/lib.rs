@@ -7,8 +7,11 @@
 //! - [`runtime`]: what every adapter shares: register a session, claim
 //!   queued deliveries, build the event an agent sees, write its answer.
 //! - [`mcp`]: a minimal stdio MCP (JSON-RPC) server.
-//! - [`claude`]: the Claude Code channel, an MCP server that declares
-//!   `claude/channel` and pushes replies with `notifications/claude/channel`.
+//! - [`server`]: the codemark MCP server any agent spawns: its tools, and
+//!   whether replies are pushed (Claude) or pulled with `codemark_inbox`
+//!   (Codex, Gemini CLI and other MCP clients).
+//! - [`claude`]: the Claude Code channel: the server plus a `claude/channel`
+//!   push of each reply as `notifications/claude/channel`.
 //!
 //! Adapters in other languages (the pi extension) wrap the CLI's
 //! `codemark agent watch`, which streams [`runtime::DeliveryEvent`]s.
@@ -16,3 +19,4 @@
 pub mod claude;
 pub mod mcp;
 pub mod runtime;
+pub mod server;

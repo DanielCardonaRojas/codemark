@@ -47,6 +47,7 @@ const MIGRATION_028: &str = include_str!("../../../../migrations/V28__add_commen
 const MIGRATION_029: &str = include_str!("../../../../migrations/V29__add_agent_bridge.sql");
 const MIGRATION_030: &str =
     include_str!("../../../../migrations/V30__add_agent_session_watcher.sql");
+const MIGRATION_031: &str = include_str!("../../../../migrations/V31__add_agent_session_push.sql");
 
 /// Whether `schema.table` has a column named `column`. Used to read packs and
 /// databases written by older versions, which lack columns added since.
@@ -74,7 +75,7 @@ pub struct Database {
 
 impl Database {
     /// Current schema version supported by this crate.
-    pub const CURRENT_VERSION: i64 = 30;
+    pub const CURRENT_VERSION: i64 = 31;
 
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
@@ -174,6 +175,7 @@ impl Database {
             (28, MIGRATION_028),
             (29, MIGRATION_029),
             (30, MIGRATION_030),
+            (31, MIGRATION_031),
         ];
 
         for (version, sql) in migrations {
@@ -207,7 +209,7 @@ impl Database {
                         [],
                     );
                     res?;
-                } else if version == 28 || version == 30 {
+                } else if version == 28 || version == 30 || version == 31 {
                     // Pure `ADD COLUMN` migrations, replayed idempotently: a
                     // database rewound to an older `user_version` (old packs,
                     // migration tests) may already hold these columns.

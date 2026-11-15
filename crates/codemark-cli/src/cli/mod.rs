@@ -1307,6 +1307,11 @@ pub enum AgentCommand {
     /// Run an agent's channel adapter on stdio (spawned by the agent)
     Channel(AgentChannelArgs),
 
+    /// Run the codemark MCP server for any MCP client (Codex, Gemini CLI, ...)
+    /// on stdio. Replies are not pushed: the agent fetches them with
+    /// codemark_inbox
+    Mcp(AgentMcpArgs),
+
     /// Configure an agent to use the bridge
     Setup(AgentSetupArgs),
 }
@@ -1378,13 +1383,35 @@ pub enum ChannelAgent {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct AgentMcpArgs {
+    #[command(flatten)]
+    pub db: DbFormatArgs,
+    /// Agent kind recorded for the session: codex, gemini, cursor, ...
+    pub kind: String,
+    /// Name shown in the TUI (defaults to the kind)
+    #[arg(long)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct AgentSetupArgs {
-    /// Which agent: claude
+    /// Which agent to configure
     #[arg(value_enum)]
-    pub agent: ChannelAgent,
-    /// Print the configuration instead of writing .mcp.json
+    pub agent: SetupAgent,
+    /// Print the configuration instead of writing it
     #[arg(long)]
     pub print: bool,
+}
+
+/// Agents `codemark agent setup` can configure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum SetupAgent {
+    /// Claude Code: the channel server in the repo's .mcp.json
+    Claude,
+    /// Codex CLI: an MCP server in ~/.codex/config.toml ($CODEX_HOME)
+    Codex,
+    /// Gemini CLI: an MCP server in the repo's .gemini/settings.json
+    Gemini,
 }
 
 #[derive(Debug, clap::Args)]
