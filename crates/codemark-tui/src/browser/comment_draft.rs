@@ -98,11 +98,14 @@ impl CommentDraft {
         }
     }
 
-    fn context(&self) -> String {
+    /// A line above the body saying what the draft is for. New comments have
+    /// none: the code they target stays highlighted behind the modal (the
+    /// cursor node or line, or the visual selection, kept until it closes).
+    fn context(&self) -> Option<&'static str> {
         match &self.kind {
-            DraftKind::Anchored(anchor) => format!("On {}", anchor.anchor_hint),
-            DraftKind::Reply { .. } => "Replying to the comment under the cursor".to_string(),
-            DraftKind::Edit { .. } => "Editing your comment".to_string(),
+            DraftKind::Anchored(_) => None,
+            DraftKind::Reply { .. } => Some("Replying to the comment under the cursor"),
+            DraftKind::Edit { .. } => Some("Editing your comment"),
         }
     }
 }
@@ -158,10 +161,9 @@ impl BrowserLayout {
         })();
 
         match anchor {
+            // A visual selection stays painted while the modal is open, so the
+            // commented span stays visible; closing the draft clears it.
             Ok(anchor) => {
-                if let Some(preview) = self.right_pane.steps.get_step_preview_mut() {
-                    preview.exit_visual();
-                }
                 self.comment_draft = Some(CommentDraft::new(
                     bookmark.id,
                     self.right_pane.active_repo_root.clone(),
@@ -285,7 +287,7 @@ impl BrowserLayout {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
         let Some(draft) = self.comment_draft.as_mut() else { return };
         match key.code {
-            KeyCode::Esc => self.comment_draft = None,
+            KeyCode::Esc => self.close_comment_draft(),
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_comment_draft()
             }
@@ -309,6 +311,17 @@ impl BrowserLayout {
             _ => {
                 draft.body.handle_key(key);
             }
+        }
+    }
+
+    /// Close the draft modal. A new comment ends the visual selection it was
+    /// opened on; a reply or edit never used it, so the selection stays.
+    fn close_comment_draft(&mut self) {
+        let Some(draft) = self.comment_draft.take() else { return };
+        if draft.anchor().is_some()
+            && let Some(preview) = self.right_pane.steps.get_step_preview_mut()
+        {
+            preview.exit_visual();
         }
     }
 
@@ -343,7 +356,7 @@ impl BrowserLayout {
         match written {
             Ok((success, message)) => {
                 self.right_pane.reload_step_comments(db);
-                self.comment_draft = None;
+                self.close_comment_draft();
                 self.notify(success, message.into());
             }
             Err(e) => {
@@ -411,11 +424,13 @@ impl BrowserLayout {
         // `Paragraph::wrap`, so the cursor's row is known exactly and the
         // caret cell past a full line's end isn't dropped at the wrap.
         let width = inner.width as usize;
-        let header = Paragraph::new(vec![
-            Line::from(Span::styled(draft.context(), Style::default().fg(palette.dim))),
-            tab_bar,
-        ])
-        .wrap(Wrap { trim: false });
+        let header_lines: Vec<Line> = draft
+            .context()
+            .map(|c| Line::from(Span::styled(c, Style::default().fg(palette.dim))))
+            .into_iter()
+            .chain(std::iter::once(tab_bar))
+            .collect();
+        let header = Paragraph::new(header_lines).wrap(Wrap { trim: false });
         let header_rows = header.line_count(inner.width).min(inner.height as usize);
         header.render(Rect { height: header_rows as u16, ..inner }, buf);
         let body_area = Rect {
@@ -698,6 +713,7 @@ mod tests {
         let key = |code| Event::Key(KeyEvent::new(code, KeyModifiers::NONE));
         assert!(rendered_text(&layout).contains("Tab query"));
         assert!(!rendered_text(&layout).contains("(call_expression"));
+        assert!(!rendered_text(&layout).contains("ping();"), "no header echoing the target code");
 
         layout.handle_event(&key(KeyCode::Tab));
         let shown = rendered_text(&layout);
