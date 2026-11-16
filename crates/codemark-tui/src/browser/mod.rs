@@ -2156,7 +2156,37 @@ impl BrowserLayout {
         // Restore the active preview from its own repo (tracked when it was
         // loaded); `None` falls back to the focused repo.
         let active_root = self.right_pane.active_repo_root.clone();
-        if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
+        let overview_id = self
+            .right_pane
+            .active_collection_id
+            .clone()
+            .filter(|_| self.right_pane.overview_active);
+        if let Some(collection_id) = overview_id {
+            // A collection overview was showing (not yet entered). It also sets
+            // `active_tour_name`, so without this branch a refresh — e.g. the
+            // `FocusGained` from clicking back into the terminal — would enter
+            // the collection's steps and yank the overview (and its focused
+            // link) out from under the user.
+            // A pull re-imports a collection under a fresh id; follow it to
+            // the replacement imported from the same source.
+            let db = self.workspace.db_for(active_root.as_deref());
+            let collection_id = match (
+                db.get_collection_by_id(&collection_id),
+                self.right_pane.active_collection_source.as_deref(),
+            ) {
+                (Ok(None), Some(source)) => db
+                    .list_collections()
+                    .ok()
+                    .and_then(|cols| {
+                        cols.into_iter()
+                            .find(|(c, _)| c.imported_from_url.as_deref() == Some(source))
+                    })
+                    .map_or(collection_id, |(c, _)| c.id),
+                _ => collection_id,
+            };
+            tracing::debug!(target: "codemark::ui", %collection_id, "refresh keeps collection overview");
+            self.load_collection_overview_live(&collection_id, active_root.as_deref());
+        } else if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
             // Reopen on the current step, resolved live, so the preview keeps
             // the user's cursor and scroll instead of flashing step 1 and a
             // range-less placeholder first.
@@ -4214,6 +4244,58 @@ mod tests {
         assert_eq!(layout.focus(), FocusArea::Main);
         assert_eq!(layout.right_pane.active_tour_name.as_deref(), Some("StartupTour"));
         assert!(!layout.right_pane.overview_active, "steps flow, not the overview");
+    }
+
+    /// Clicking back into the terminal sends `FocusGained` before the click,
+    /// and its panel rebuild used to enter the previewed collection's steps,
+    /// so the overview (and the link being cycled with `n`) vanished.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn refocus_keeps_collection_overview_and_its_focused_link() {
+        use codemark_core::engine::bookmark::{CollectionLink, CollectionLinkKind};
+        use ratatui::crossterm::event::{
+            KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        let mut layout = startup_layout();
+        layout
+            .db()
+            .insert_collection_link(&CollectionLink {
+                id: "link-1".into(),
+                collection_id: "col-start".into(),
+                kind: CollectionLinkKind::Issue,
+                label: "#1".into(),
+                url: "https://example.com/issues/1".into(),
+                sort_order: 0,
+                added_at: "2026-01-01T00:00:00Z".into(),
+                added_by: None,
+            })
+            .expect("seed link");
+        layout.set_focus(FocusArea::ContentPanel);
+        assert_eq!(layout.content_tab(), Some(ContentTab::Collections));
+        let area = Rect::new(0, 0, 160, 40);
+        let render = |layout: &BrowserLayout| layout.render(area, &mut Buffer::empty(area));
+        render(&layout);
+        assert!(layout.right_pane.overview_active, "collection overview shown");
+
+        // Focus the overview with a click, then focus its link with `n`.
+        let right = layout.right_pane.last_area();
+        layout.handle_event(&Event::FocusGained);
+        layout.handle_event(&Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: right.x + right.width / 2,
+            row: right.y + right.height / 2,
+            modifiers: KeyModifiers::NONE,
+        }));
+        render(&layout);
+        assert_eq!(layout.focus(), FocusArea::Main);
+        assert!(layout.right_pane.overview_active, "a click keeps the overview");
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)));
+        assert_eq!(layout.right_pane.overview.focused_link(), Some(0));
+
+        // Leave the terminal and come back: still the overview, same link.
+        layout.handle_event(&Event::FocusGained);
+        render(&layout);
+        assert!(layout.right_pane.overview_active, "a refocus keeps the overview");
+        assert_eq!(layout.right_pane.overview.focused_link(), Some(0));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
