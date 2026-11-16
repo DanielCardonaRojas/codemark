@@ -109,6 +109,10 @@ pub struct RightPane {
     /// ID of the collection whose overview is shown, so a heal/sync can refresh
     /// [`overview_health`](Self::overview_health) without reloading the overview.
     pub active_collection_id: Option<String>,
+    /// `imported_from_url` of the collection whose overview is shown. A pull
+    /// re-imports a collection under a fresh id; this finds the replacement
+    /// (names aren't unique) when a refresh reloads the overview.
+    pub active_collection_source: Option<String>,
     /// Details panel showing bookmark metadata and comments (now template-driven)
     pub details: TabbedPanel,
     /// Data for each step in the current tour
@@ -236,6 +240,7 @@ impl RightPane {
             overview_active: false,
             overview_health: None,
             active_collection_id: None,
+            active_collection_source: None,
             details: TabbedPanel::new_details_comments(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
@@ -1387,6 +1392,7 @@ impl RightPane {
             }
         });
         self.active_collection_id = Some(collection.id.clone());
+        self.active_collection_source = collection.imported_from_url.clone();
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.

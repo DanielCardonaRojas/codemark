@@ -2167,6 +2167,23 @@ impl BrowserLayout {
             // `FocusGained` from clicking back into the terminal — would enter
             // the collection's steps and yank the overview (and its focused
             // link) out from under the user.
+            // A pull re-imports a collection under a fresh id; follow it to
+            // the replacement imported from the same source.
+            let db = self.workspace.db_for(active_root.as_deref());
+            let collection_id = match (
+                db.get_collection_by_id(&collection_id),
+                self.right_pane.active_collection_source.as_deref(),
+            ) {
+                (Ok(None), Some(source)) => db
+                    .list_collections()
+                    .ok()
+                    .and_then(|cols| {
+                        cols.into_iter()
+                            .find(|(c, _)| c.imported_from_url.as_deref() == Some(source))
+                    })
+                    .map_or(collection_id, |(c, _)| c.id),
+                _ => collection_id,
+            };
             tracing::debug!(target: "codemark::ui", %collection_id, "refresh keeps collection overview");
             self.load_collection_overview_live(&collection_id, active_root.as_deref());
         } else if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
