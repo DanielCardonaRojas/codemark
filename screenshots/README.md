@@ -23,6 +23,10 @@ The fixture is built fresh on every capture:
 - The tapes run from the clone, so previews resolve against real source files
   at the pinned commit.
 
+The comment tapes (`comments.tape`, `comments-thumb.tape`) write comments into
+the fixture DB, so `capture.sh` snapshots the fixture's `.codemark/` dir and
+restores it before and after each one.
+
 Because the fixture is seeded by script rather than committed as a binary, it
 always matches the current schema; there's nothing to migrate.
 
@@ -68,6 +72,8 @@ The generated images live in `screenshots/images/`; the tooling (tapes,
 | `filter-thumb.tape` | `codemark_tui_filter_thumb.png` | Static thumbnail (filtered Bookmarks pane) — the poster for the filter demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
 | `layout.tape` | `codemark_tui_layout.gif` | Animated tour of pane resizing: focus a pane, cycle its size with `+`/`-` (preview, details, then the left pane) |
 | `layout-thumb.tape` | `codemark_tui_layout_thumb.png` | Static thumbnail (full-width preview) — the poster for the layout demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
+| `comments.tape` | `codemark_tui_comments.gif` | Animated tour of anchored comments: an agent comments via `codemark comment add --created-by claude`, then reply (`r`), comment (`c`), edit (`E`) inline, switch to the side-by-side layout (`+`), delete a thread (`d`) |
+| `comments-thumb.tape` | `codemark_tui_comments_thumb.png` | Static thumbnail (threads beside the code) — the poster for the comments demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
 | `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
 
 The demo GIF is the README's lead visual. It's recorded at full TUI resolution

@@ -23,6 +23,39 @@ was removed. That way you see how health shows up, not just the happy path.
 
 ---
 
+## Comments — agents and people
+
+Comments point at specific lines inside a bookmark, and each has its own
+structural anchor, so it follows that code when the file changes. An agent can
+leave one from the CLI:
+
+```bash
+codemark comment add <bookmark> --range 24-25 --created-by claude \
+  --body "This compiles the query on every call. Cache compiled queries per language?"
+```
+
+Open the bookmark in the TUI and the agent's comment sits right under the lines
+it's about. With the code preview focused:
+
+- `n` / `N` jump to the next / previous comment.
+- `r` replies to the comment under the cursor.
+- `c` comments on the line under the cursor (press `v` first to select a
+  range).
+- `E` edits your latest comment in the thread.
+- `d` deletes the thread, after asking first.
+- `Ctrl+S` saves a draft and `Esc` cancels it.
+
+There are two ways to show comments. **Inline** (the default) opens each thread
+in the code, right below the lines it points at. **Side by side** puts the
+threads in a column next to the code, each lined up with its line, so the code
+stays together. With the preview focused, `+` cycles the layouts: full width,
+then side by side, then preview only, then back to the split. `-` goes the other
+way.
+
+![Codemark TUI anchored comments](../../screenshots/images/codemark_tui_comments.gif)
+
+---
+
 ## Settings
 
 Press `,` to open the Settings overlay, then move across its tabs with `]` / `[`
