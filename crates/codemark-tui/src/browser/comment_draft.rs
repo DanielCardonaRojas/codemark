@@ -314,10 +314,13 @@ impl BrowserLayout {
         }
     }
 
-    /// Close the draft modal, ending the visual selection it was opened on.
+    /// Close the draft modal. A new comment ends the visual selection it was
+    /// opened on; a reply or edit never used it, so the selection stays.
     fn close_comment_draft(&mut self) {
-        self.comment_draft = None;
-        if let Some(preview) = self.right_pane.steps.get_step_preview_mut() {
+        let Some(draft) = self.comment_draft.take() else { return };
+        if draft.anchor().is_some()
+            && let Some(preview) = self.right_pane.steps.get_step_preview_mut()
+        {
             preview.exit_visual();
         }
     }
