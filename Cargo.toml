@@ -94,3 +94,10 @@ create-release = false
 # asset upload by hand so re-runs are idempotent; that flag isn't emitted by
 # `dist generate`, so dist must be told the CI file is intentionally dirty.
 allow-dirty = ["ci"]
+
+# dist 0.32 maps aarch64-apple-darwin to `macos-14`, which GitHub no longer
+# supports ("The configuration 'macos-14-arm64-us-default' is not supported"):
+# the job is cancelled instantly, so the whole release skips the host/upload
+# steps and ships no installers. Pin the Apple Silicon build to macos-15.
+[workspace.metadata.dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
