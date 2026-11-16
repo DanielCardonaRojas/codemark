@@ -422,6 +422,12 @@ impl MarkdownPanel {
         true
     }
 
+    /// Index of the link focused with `n` / `N`, if any.
+    #[cfg(test)]
+    pub(crate) fn focused_link(&self) -> Option<usize> {
+        self.focused_link_index
+    }
+
     /// Open the currently focused link in the system browser. Returns whether a
     /// link was opened.
     fn open_focused_link(&mut self) -> bool {

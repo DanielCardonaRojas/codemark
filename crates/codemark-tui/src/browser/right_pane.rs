@@ -1366,7 +1366,11 @@ impl RightPane {
         )
         .unwrap_or_else(|e| format!("# {}\n\nError rendering overview: {}", collection.name, e));
 
-        self.overview.set_markdown(markdown);
+        // Reloading the overview already on screen (a refresh on refocus) keeps
+        // its scroll and focused link; `set_markdown` would reset both.
+        if !(self.overview_active && self.overview.markdown() == markdown) {
+            self.overview.set_markdown(markdown);
+        }
         self.overview_active = true;
         self.overview_health = collection.health.map(|h| match h {
             codemark_core::engine::bookmark::CollectionHealth::Active => {
