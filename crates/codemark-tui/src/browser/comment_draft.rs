@@ -99,7 +99,8 @@ impl CommentDraft {
     }
 
     /// A line above the body saying what the draft is for. New comments have
-    /// none: the code they target is highlighted right behind the modal.
+    /// none: the code they target stays highlighted behind the modal (the
+    /// cursor node or line, or the visual selection, kept until it closes).
     fn context(&self) -> Option<&'static str> {
         match &self.kind {
             DraftKind::Anchored(_) => None,
@@ -160,10 +161,9 @@ impl BrowserLayout {
         })();
 
         match anchor {
+            // A visual selection stays painted while the modal is open, so the
+            // commented span stays visible; closing the draft clears it.
             Ok(anchor) => {
-                if let Some(preview) = self.right_pane.steps.get_step_preview_mut() {
-                    preview.exit_visual();
-                }
                 self.comment_draft = Some(CommentDraft::new(
                     bookmark.id,
                     self.right_pane.active_repo_root.clone(),
@@ -287,7 +287,7 @@ impl BrowserLayout {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
         let Some(draft) = self.comment_draft.as_mut() else { return };
         match key.code {
-            KeyCode::Esc => self.comment_draft = None,
+            KeyCode::Esc => self.close_comment_draft(),
             KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.save_comment_draft()
             }
@@ -311,6 +311,14 @@ impl BrowserLayout {
             _ => {
                 draft.body.handle_key(key);
             }
+        }
+    }
+
+    /// Close the draft modal, ending the visual selection it was opened on.
+    fn close_comment_draft(&mut self) {
+        self.comment_draft = None;
+        if let Some(preview) = self.right_pane.steps.get_step_preview_mut() {
+            preview.exit_visual();
         }
     }
 
@@ -345,7 +353,7 @@ impl BrowserLayout {
         match written {
             Ok((success, message)) => {
                 self.right_pane.reload_step_comments(db);
-                self.comment_draft = None;
+                self.close_comment_draft();
                 self.notify(success, message.into());
             }
             Err(e) => {
