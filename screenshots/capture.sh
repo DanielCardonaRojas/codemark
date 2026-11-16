@@ -272,5 +272,50 @@ rendered="$RENDER_DIR/layout-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/layout-thumb.tape" > "$rendered"
 ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
+# The comment tapes write comments into the fixture DB (an agent's comment via
+# the CLI, then replies/edits/deletes in the TUI). Snapshot the whole .codemark
+# dir (the DB plus any -wal/-shm sidecars) and restore it around each, so every
+# comment tape starts from the same seed and the comments never leak into the
+# tapes above if they're reordered.
+COMMENTS_SEED="$SANDBOX/codemark-seed"
+cp -R "$FIXTURE_REPO/.codemark" "$COMMENTS_SEED"
+restore_fixture_db() {
+  rm -rf "$FIXTURE_REPO/.codemark"
+  cp -R "$COMMENTS_SEED" "$FIXTURE_REPO/.codemark"
+}
+
+# Comments demo GIF: an agent comments via the CLI, then reply / comment / edit
+# / delete in the TUI, inline and side by side. Same two-pass ffmpeg downscale.
+echo "    - comments.tape (gif)"
+COMMENTS_GIF_FINAL="$IMAGES_DIR/codemark_tui_comments.gif"
+restore_fixture_db
+if command -v ffmpeg >/dev/null; then
+  COMMENTS_GIF_RAW="$SANDBOX/comments_raw.gif"
+  rendered="$RENDER_DIR/comments.tape"
+  sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/comments.tape" > "$rendered"
+  # comments.tape writes codemark_tui_comments.gif into the __OUT__ dir (sandbox).
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  mv "$SANDBOX/codemark_tui_comments.gif" "$COMMENTS_GIF_RAW"
+  PAL="$SANDBOX/comments_palette.png"
+  ffmpeg -y -loglevel error -i "$COMMENTS_GIF_RAW" \
+    -vf "scale=1280:-1:flags=lanczos,palettegen=stats_mode=diff" "$PAL"
+  ffmpeg -y -loglevel error -i "$COMMENTS_GIF_RAW" -i "$PAL" \
+    -lavfi "scale=1280:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" \
+    "$COMMENTS_GIF_FINAL"
+else
+  echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
+  rendered="$RENDER_DIR/comments.tape"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/comments.tape" > "$rendered"
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+fi
+
+# Comments thumbnail: threads beside the code (side-by-side layout) — poster.
+echo "    - comments-thumb.tape (png)"
+restore_fixture_db
+rendered="$RENDER_DIR/comments-thumb.tape"
+sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/comments-thumb.tape" > "$rendered"
+( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+restore_fixture_db
+
 echo "==> Done. Updated:"
 ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null

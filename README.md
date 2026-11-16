@@ -89,6 +89,9 @@ next agent session:
 - 🐞 **Hunt a bug in a known flow**
   > *"There's a bug where expired tokens are still accepted. Read the `auth-flow`
   > collection and tell me which hop is most likely responsible."*
+- 💬 **Review code with comments**
+  > *"Read the `request-lifecycle` collection and leave a comment on any line
+  > that looks risky, anchored to the code it's about."*
 - 🔗 **Relate two flows**
   > *"Compare the `request-lifecycle` and `background-jobs` collections. Where do
   > they share code or state, and where could they conflict?"*
@@ -116,6 +119,12 @@ codemark tui
 
 <table>
   <tr>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#comments--agents-and-people">
+        <img src="./screenshots/images/codemark_tui_comments_thumb.png" width="220" alt="Anchored code comments demo">
+        <br><sub><b>Code comments</b></sub>
+      </a>
+    </td>
     <td align="center" width="240">
       <a href="./dev-docs/guides/demo-gallery.md#settings">
         <img src="./screenshots/images/codemark_tui_settings_thumb.png" width="220" alt="Settings overlay demo">
@@ -161,6 +170,15 @@ variable; run `codemark-tui --list-schemes` to see what's available.
   keyboard-first interface. Move with `j`/`k` (or arrows), cycle panes with
   `Tab`, switch tabs with `[` / `]`, and resize panes with `+` / `-`. Press `?`
   at any time for a context-aware help overlay.
+- **💬 Comments anchored to code** Comment on the exact lines a bookmark
+  covers, not just the bookmark as a whole. In the code preview, `c` comments on
+  the line under the cursor (`v` selects a range first), `r` replies, `E` edits
+  your comment, and `d` deletes a thread; `n`/`N` jump between comments. Threads
+  show inline under their code, or beside it in the side-by-side layout (`+` on
+  the preview). Agents comment too, from the CLI
+  (`codemark comment add <bookmark> --range 24-25 --created-by claude --body "..."`),
+  and their comments land in the same threads. Each comment is anchored with its
+  own structural query, so it follows its code as the file changes.
 - **🔄 Push / pull syncing** Publish collections and tours to a remote
   [codetours](./crates/codetours-server) server with `P` (push), and pull shared
   tours back down with `p`. Share curated walkthroughs across a team.
@@ -191,6 +209,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 - 🖥️ **Interactive Dashboard**: Lazygit-style TUI for efficient, keyboard-first interaction.
 - 📑 **Rich Metadata**: Captures AST structure, git context, content hashes, and append-only notes/tags.
 - 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*) with local embeddings, no API key.
+- 💬 **Anchored Comments**: Comment threads pinned to lines inside a bookmark, from you or your agent, that follow the code as it moves.
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
 - 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you. Works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
