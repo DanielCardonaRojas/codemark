@@ -1367,8 +1367,11 @@ impl RightPane {
         .unwrap_or_else(|e| format!("# {}\n\nError rendering overview: {}", collection.name, e));
 
         // Reloading the overview already on screen (a refresh on refocus) keeps
-        // its scroll and focused link; `set_markdown` would reset both.
-        if !(self.overview_active && self.overview.markdown() == markdown) {
+        // its scroll and focused link; `set_markdown` would reset both. The
+        // styled text is still rebuilt, as the theme may have changed.
+        if self.overview_active && self.overview.markdown() == markdown {
+            self.overview.invalidate_styles();
+        } else {
             self.overview.set_markdown(markdown);
         }
         self.overview_active = true;

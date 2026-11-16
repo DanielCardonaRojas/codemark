@@ -92,6 +92,12 @@ impl MarkdownPanel {
         self.cached_content_hash.set(0);
     }
 
+    /// Drop the cached styled text so the next render re-reads the palette,
+    /// keeping scroll and the focused link (unlike [`Self::set_markdown`]).
+    pub fn invalidate_styles(&self) {
+        self.cached_content_hash.set(0);
+    }
+
     /// Get the current markdown content.
     pub fn markdown(&self) -> &str {
         &self.content
