@@ -372,6 +372,44 @@ fn find_tightest_node<'a>(
         end -= 1;
     }
 
+    let node = node_for_trimmed_range(root, start, end)?;
+
+    // A trailing separator comma. A list member — a JSON or object-literal
+    // `pair`, a struct field — stops before its comma, which the grammar makes
+    // a sibling token of the parent. Left in, it makes the selected line wider
+    // than the member, so `"city": "Springfield",` resolved to the whole
+    // enclosing object instead of the pair on that line. Only a real `,` token
+    // counts; a comma that ends a string or comment is part of that node.
+    //
+    // The tighter member is taken only when it can name itself. A name is what
+    // tells it apart from its siblings; a nameless one — a PHP `match` arm, an
+    // array element — is usually shaped like its neighbours, and narrowing to
+    // it turns a bookmarkable line into an ambiguous query that is refused.
+    let mut member_end = end;
+    if member_end > start
+        && source[member_end - 1] == b','
+        && root
+            .descendant_for_byte_range(member_end - 1, member_end)
+            .is_some_and(|n| n.kind() == ",")
+    {
+        member_end -= 1;
+        while member_end > start && (source[member_end - 1] as char).is_whitespace() {
+            member_end -= 1;
+        }
+        if member_end > start
+            && let Ok(member) = node_for_trimmed_range(root, start, member_end)
+            && member.id() != node.id()
+            && extract_name_info(member, source).is_some()
+        {
+            return Ok(member);
+        }
+    }
+    Ok(node)
+}
+
+/// [`find_tightest_node`] for a range already trimmed of surrounding
+/// whitespace.
+fn node_for_trimmed_range<'a>(root: &Node<'a>, start: usize, end: usize) -> Result<Node<'a>> {
     if start == end {
         // Point range: pick the deepest named node at this position
         let mut node = root
@@ -1298,6 +1336,37 @@ fn extract_name_info_direct_toward<'t>(
         });
     }
 
+    // For an object-literal `pair` (JSON, JavaScript, TypeScript): the key.
+    //
+    // A pair names itself through `key`, not `name`, so without this branch it
+    // is nameless and every query through it is purely positional. That is
+    // tolerable in code, where an object literal is a leaf, but in JSON the
+    // pairs *are* the structure: `customer.address.city` and
+    // `supplier.address.city` produced the same query and every nested line in
+    // a JSON document was refused as ambiguous.
+    //
+    // A string key is matched on its content, so the predicate compares `city`
+    // rather than `"city"` with its quotes. That needs exactly one named child:
+    // an escape sequence splits the content into several, and the empty string
+    // has none, so those compare the whole quoted key instead.
+    if node.kind() == "pair"
+        && let Some(key) = name_child_by_own_field(node, "key", probe)
+    {
+        let content = (key.kind() == "string" && key.named_child_count() == 1)
+            .then(|| key.named_child(0))
+            .flatten();
+        let (inner_types, text) = match content {
+            Some(c) => (vec![NameHop::positional(c.kind())], node_text(c, source)),
+            None => (Vec::new(), node_text(key, source)),
+        };
+        return Some(NameInfo {
+            field: Some("key".to_string()),
+            direct_type: key.kind().to_string(),
+            inner_types,
+            text,
+        });
+    }
+
     // For Swift switch_entry: use pattern or "default"
     if node.kind() == "switch_entry" {
         let mut cursor = node.walk();
@@ -2159,6 +2228,76 @@ export function Label({ text }: { text: string }) {
         let matches =
             matcher::run_query(&result.query, &edited_tree, edited.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query after edit:\n{}", result.query);
+    }
+
+    /// Byte range of 1-based `line`, without its newline — what `--range N`
+    /// hands the generator.
+    fn line_byte_range(source: &str, line: usize) -> (usize, usize) {
+        let start = source.lines().take(line - 1).map(|l| l.len() + 1).sum::<usize>();
+        (start, start + source.lines().nth(line - 1).unwrap().len())
+    }
+
+    /// The `"city": ...,` line in two objects that differ only in their keys —
+    /// the shape of every nested line in a JSON document, where `pair` is the
+    /// only kind with a name.
+    const PAIR_KEYS: &str = r#"const invoice = {
+  "customer": {
+    "address": {
+      "city": "Springfield",
+      "country": "US"
+    }
+  },
+  "supplier": {
+    "address": {
+      "city": "Shelbyville",
+      "country": "US"
+    }
+  }
+};
+"#;
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn pair_line_with_trailing_comma_targets_the_pair() {
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(PAIR_KEYS.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        // The comma after the value is a sibling of the pair, not part of it.
+        // Selecting the whole line used to resolve to the enclosing object.
+        let range = line_byte_range(PAIR_KEYS, 4);
+        let result =
+            generate_query(&tree, PAIR_KEYS.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert_eq!(result.target_node_type, "pair", "query:\n{}", result.query);
+        assert_eq!(result.target_name.as_deref(), Some("city"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn pair_keys_disambiguate_identically_shaped_objects() {
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(PAIR_KEYS.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        // `supplier.address.city`. Without key names the path is just
+        // pair > object > pair > object > pair, which `customer` matches too.
+        let range = line_byte_range(PAIR_KEYS, 10);
+        let result =
+            generate_query(&tree, PAIR_KEYS.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert!(
+            result.query.contains("key: (string (string_fragment)"),
+            "a string key should match on its content, without quotes:\n{}",
+            result.query
+        );
+
+        let matches =
+            matcher::run_query(&result.query, &tree, PAIR_KEYS.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+        assert_eq!(
+            matches[0].start_point.0, 9,
+            "matched the wrong `city` — the query lost a key on the way down:\n{}",
+            result.query
+        );
     }
 
     // --- Python tests ---
