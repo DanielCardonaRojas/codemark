@@ -140,6 +140,14 @@ pub fn generate_query(
         None => (wide, disambiguate_query(wide, &ctx)?),
     };
 
+    // The query may capture an ancestor of the selection: a selected name
+    // lifts to the node it names (a key to its pair). Report the node it
+    // actually captures, since the bookmark's content hash is taken over this
+    // range and resolution compares it with what the query finds — reporting
+    // the key while capturing the pair made the bookmark drift with no edit.
+    // `generate_scoped_query` does the same.
+    let node = captured_ancestor(node, &query, &ctx).unwrap_or(node);
+
     // 3. Extract metadata
     let name = extract_name_info(node, ctx.source)
         .map(|info| info.text)
@@ -272,6 +280,26 @@ pub fn generate_scoped_query(
                 });
             }
         }
+    }
+}
+
+/// The node `query` captures for `target`: `target` itself or the ancestor
+/// whose range the smallest containing capture spans. `None` when the query
+/// captures nothing containing `target`, or the capture is no node on its
+/// ancestor chain.
+fn captured_ancestor<'t>(
+    target: Node<'t>,
+    query: &str,
+    ctx: &QueryContext<'t>,
+) -> Option<Node<'t>> {
+    let matches = matcher::run_query_in(query, ctx.root, ctx.source, ctx.language).ok()?;
+    let (start, end) = smallest_capture_of(&matches, target)?.byte_range;
+    let mut node = target;
+    loop {
+        if (node.start_byte(), node.end_byte()) == (start, end) {
+            return Some(node);
+        }
+        node = node.parent()?;
     }
 }
 
@@ -2306,6 +2334,15 @@ export function Label({ text }: { text: string }) {
             matches[0].node_text,
             result.query
         );
+        // The bookmark's content hash is taken over `byte_range` and compared
+        // against what resolution captures. Reporting the key while the query
+        // captures the pair made every such bookmark drift without an edit.
+        assert_eq!(
+            result.byte_range, matches[0].byte_range,
+            "reported range differs from the captured node:\n{}",
+            result.query
+        );
+        assert_eq!(result.target_node_type, "pair");
     }
 
     #[tokio::test]
