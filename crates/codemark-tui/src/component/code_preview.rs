@@ -922,6 +922,8 @@ impl CodePreview {
         let t = &self.inline.threads[thread];
         self.inline.cursor_on = Some(t.root_id.clone());
         self.selected_line = Some(t.anchor_start.min(self.line_count().saturating_sub(1)));
+        self.cursor_col = t.start_col;
+        self.clamp_cursor_col();
         self.visual_anchor = None;
         self.scroll_to_cursor();
         self.user_moved = true;
@@ -1331,6 +1333,11 @@ impl CodePreview {
         } else {
             self.thread_line(thread)
         });
+        if beside {
+            // The block cursor marks the node's first character.
+            self.cursor_col = thread.start_col;
+            self.clamp_cursor_col();
+        }
         // A selection can't end on a bubble: leave visual mode.
         self.visual_anchor = None;
         self.inline.cursor_on = Some(id);
@@ -1607,8 +1614,14 @@ impl Component for CodePreview {
             .unwrap_or_default();
         // The cursor is on a code line, or on a bubble (shown by its border).
         let cursor_bubble = cursor_thread.and_then(|t| layout.bubble_rows(t));
-        let selected_row =
+        let cursor_row =
             self.selected_line.filter(|_| cursor_bubble.is_none()).map(|line| layout.row_of(line));
+        // A thread picked beside the code (`n` / `N`, a click in the side
+        // list) already shows its node; the cursor line's background over it
+        // just muddies it, so only the block cursor marks the spot until the
+        // cursor moves off the thread.
+        let picked_beside = self.inline.beside.get() && cursor_thread.is_some();
+        let selected_row = cursor_row.filter(|_| !picked_beside);
         drop(layout);
         drop(cached); // Drop cached before rendering
 
@@ -1661,8 +1674,8 @@ impl Component for CodePreview {
         // selection background by reversing the cell under the cursor, so it
         // keeps the underlying character and stays theme-independent.
         if self.focused
-            && self.selection_mode
-            && let Some(row) = selected_row
+            && (self.selection_mode || picked_beside)
+            && let Some(row) = cursor_row
             && row >= offset
         {
             let screen_row = (row - offset) as u16;
@@ -2825,6 +2838,36 @@ mod tests {
         assert!(row_from(&buf, 30, 2).contains("┌ claude"), "{}", row_from(&buf, 30, 2));
         assert!(row_from(&buf, 30, 3).contains("second"));
         assert_eq!(preview.selected_line, Some(2), "the cursor is on the node's first line");
+    }
+
+    #[test]
+    fn landing_on_a_thread_beside_the_code_shows_only_the_block_cursor() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        preview.set_focus(true);
+        let mut t = thread("a", 1, 1, &["first"]);
+        (t.start_col, t.end_col) = (2, 4);
+        preview.set_threads(vec![t]);
+        render_beside(&preview, 30, 44, 10);
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        let buf = render_beside(&preview, 30, 44, 10);
+        let gutter = preview.gutter_width();
+        assert!(
+            (0..30).all(|x| buf[(x, 1)].bg != crate::theme::SELECTION_BG),
+            "no cursor-line background under the picked node"
+        );
+        assert!(
+            (gutter + 2..gutter + 4).all(|x| buf[(x, 1)].bg == crate::theme::COMMENT_ANCHOR_BG)
+        );
+        let cursor = &buf[(gutter + 2, 1)];
+        assert!(
+            cursor.modifier.contains(Modifier::REVERSED),
+            "block cursor on the node's first character"
+        );
+
+        // Moving off the thread brings the cursor line back.
+        assert!(preview.handle_event(&key(KeyCode::Char('j'))));
+        let buf = render_beside(&preview, 30, 44, 10);
+        assert_eq!(buf[(0, 2)].bg, crate::theme::SELECTION_BG);
     }
 
     #[test]
