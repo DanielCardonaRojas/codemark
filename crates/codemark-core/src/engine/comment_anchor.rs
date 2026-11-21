@@ -132,7 +132,11 @@ pub fn generate_comment_anchor(
     let landmark = deepest_landmark(tree, bookmark_range, profile);
     // A line selection carries its indentation and newline; judge the code
     // itself, or the last statement of a function would fall "outside" it.
-    let comment_range = trim_whitespace(source, comment_range);
+    let comment_range = snap_point_to_line(
+        source,
+        trim_whitespace(source, comment_range),
+        (landmark.start_byte(), landmark.end_byte()),
+    );
     if comment_range.0 < landmark.start_byte() || comment_range.1 > landmark.end_byte() {
         tracing::debug!(
             target: "codemark::comments",
@@ -299,6 +303,49 @@ fn trim_whitespace(source: &str, (mut start, mut end): (usize, usize)) -> (usize
         end -= 1;
     }
     (start, end)
+}
+
+/// A point (empty range) in a line's indentation or past its last
+/// character becomes that line's code, as if the whole line were selected.
+/// The deepest node at such a point is whatever block encloses the line, so
+/// a comment placed with the cursor at column 0 would otherwise anchor to
+/// the surrounding `{ ... }` instead of the statement on the line. Points on
+/// the code itself, and points on blank lines, are left alone.
+///
+/// The snapped range is kept inside `scope` (the landmark) when the point is
+/// in it: a line shared with code outside the landmark (`    } }`, a method
+/// and its `impl` closing together) must not push the comment out of scope.
+/// Works on bytes, so a point inside a multi-byte character can't panic.
+fn snap_point_to_line(
+    source: &str,
+    (start, end): (usize, usize),
+    (scope_start, scope_end): (usize, usize),
+) -> (usize, usize) {
+    let bytes = source.as_bytes();
+    if start != end || start > bytes.len() {
+        return (start, end);
+    }
+    let line_start = bytes[..start].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+    let line_end =
+        bytes[start..].iter().position(|&b| b == b'\n').map_or(bytes.len(), |i| start + i);
+    let (mut code_start, mut code_end) = trim_whitespace(source, (line_start, line_end));
+    if code_start == code_end || (code_start..code_end).contains(&start) {
+        return (start, end);
+    }
+    if (scope_start..=scope_end).contains(&start) {
+        code_start = code_start.max(scope_start);
+        code_end = code_end.min(scope_end);
+        if code_start >= code_end {
+            return (start, end);
+        }
+    }
+    tracing::debug!(
+        target: "codemark::comments",
+        point = start,
+        line = ?(code_start, code_end),
+        "comment point outside the line's code; anchoring the line"
+    );
+    (code_start, code_end)
 }
 
 /// 0-indexed line holding byte `offset`.
@@ -698,6 +745,45 @@ fn helper(n: usize) -> usize { n }
         for line in ["@staticmethod", "return AuthService(secret=\"default-secret\")"] {
             let text = round_trip("python", source, bookmark, range_of(source, line));
             assert!(text.contains(line.trim_start_matches('@')), "{line:?} landed on {text:?}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn a_point_in_a_lines_indentation_anchors_its_statement_not_the_block() {
+        let source =
+            "fn f(ok: bool) -> u8 {\n    if !ok {\n        return 0;\n    }\n    1   \n}\n";
+        let ret = source.find("return 0;").unwrap();
+        let line_start = source[..ret].rfind('\n').unwrap() + 1;
+        let bookmark = range_of(source, "fn f");
+        let bookmark = (bookmark.0, source.len() - 1);
+        // Column 0, mid-indentation, and just past the line's end.
+        let past_end = ret + "return 0;".len();
+        for point in [line_start, line_start + 4, past_end] {
+            let text = round_trip("rust", source, bookmark, (point, point));
+            assert_eq!(text, "return 0;", "point at {point}");
+        }
+        // A point on the code itself still picks the deepest node there.
+        assert_eq!(round_trip("rust", source, bookmark, (ret, ret)), "return 0");
+        // Trailing whitespace after the code snaps too.
+        let one = source.find("1   ").unwrap();
+        assert_eq!(round_trip("rust", source, bookmark, (one + 2, one + 2)), "1");
+    }
+
+    #[test]
+    fn snapping_stays_inside_the_scope_and_on_char_boundaries() {
+        // A method and its `impl` close on one line: the snap stops at the
+        // method's brace rather than taking both.
+        let source = "impl A {\n    fn f() {\n    } }\n";
+        let line = source.find("    } }").unwrap();
+        let method_end = line + 5;
+        let snapped = snap_point_to_line(source, (line, line), (0, method_end));
+        assert_eq!(&source[snapped.0..snapped.1], "}");
+        // Points inside a multi-byte character don't panic.
+        let source = "fn f() {\n    \"界\"\n}\n";
+        let wide = source.find('界').unwrap();
+        for point in wide..wide + '界'.len_utf8() {
+            snap_point_to_line(source, (point, point), (0, source.len()));
         }
     }
 
