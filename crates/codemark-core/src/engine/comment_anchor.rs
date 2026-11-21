@@ -132,7 +132,7 @@ pub fn generate_comment_anchor(
     let landmark = deepest_landmark(tree, bookmark_range, profile);
     // A line selection carries its indentation and newline; judge the code
     // itself, or the last statement of a function would fall "outside" it.
-    let comment_range = trim_whitespace(source, comment_range);
+    let comment_range = snap_point_to_line(source, trim_whitespace(source, comment_range));
     if comment_range.0 < landmark.start_byte() || comment_range.1 > landmark.end_byte() {
         tracing::debug!(
             target: "codemark::comments",
@@ -299,6 +299,31 @@ fn trim_whitespace(source: &str, (mut start, mut end): (usize, usize)) -> (usize
         end -= 1;
     }
     (start, end)
+}
+
+/// A point (empty range) in a line's indentation or past its last
+/// character becomes that line's code, as if the whole line were selected.
+/// The deepest node at such a point is whatever block encloses the line, so
+/// a comment placed with the cursor at column 0 would otherwise anchor to
+/// the surrounding `{ ... }` instead of the statement on the line. Points on
+/// the code itself, and points on blank lines, are left alone.
+fn snap_point_to_line(source: &str, (start, end): (usize, usize)) -> (usize, usize) {
+    if start != end {
+        return (start, end);
+    }
+    let line_start = source[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = source[start..].find('\n').map_or(source.len(), |i| start + i);
+    let (code_start, code_end) = trim_whitespace(source, (line_start, line_end));
+    if code_start == code_end || (code_start..code_end).contains(&start) {
+        return (start, end);
+    }
+    tracing::debug!(
+        target: "codemark::comments",
+        point = start,
+        line = ?(code_start, code_end),
+        "comment point outside the line's code; anchoring the line"
+    );
+    (code_start, code_end)
 }
 
 /// 0-indexed line holding byte `offset`.
@@ -699,6 +724,28 @@ fn helper(n: usize) -> usize { n }
             let text = round_trip("python", source, bookmark, range_of(source, line));
             assert!(text.contains(line.trim_start_matches('@')), "{line:?} landed on {text:?}");
         }
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn a_point_in_a_lines_indentation_anchors_its_statement_not_the_block() {
+        let source =
+            "fn f(ok: bool) -> u8 {\n    if !ok {\n        return 0;\n    }\n    1   \n}\n";
+        let ret = source.find("return 0;").unwrap();
+        let line_start = source[..ret].rfind('\n').unwrap() + 1;
+        let bookmark = range_of(source, "fn f");
+        let bookmark = (bookmark.0, source.len() - 1);
+        // Column 0, mid-indentation, and just past the line's end.
+        let past_end = ret + "return 0;".len();
+        for point in [line_start, line_start + 4, past_end] {
+            let text = round_trip("rust", source, bookmark, (point, point));
+            assert_eq!(text, "return 0;", "point at {point}");
+        }
+        // A point on the code itself still picks the deepest node there.
+        assert_eq!(round_trip("rust", source, bookmark, (ret, ret)), "return 0");
+        // Trailing whitespace after the code snaps too.
+        let one = source.find("1   ").unwrap();
+        assert_eq!(round_trip("rust", source, bookmark, (one + 2, one + 2)), "1");
     }
 
     #[test]
