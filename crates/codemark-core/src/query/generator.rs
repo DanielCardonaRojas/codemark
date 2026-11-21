@@ -126,17 +126,24 @@ pub fn generate_query(
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
     // 1. Select the tightest meaningful target node
-    let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
+    let tightest = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
-    node = descend_into_bodies(node, ctx.source, ctx.byte_range);
+    // 2. Disambiguate and anchor. A comma-trimmed member is tried first; when
+    //    it repeats a sibling, the wider node the selection covers is kept.
+    let wide = descend_into_bodies(tightest.node, ctx.source, ctx.byte_range);
+    let (node, query) = match tightest.member {
+        Some(member) => match disambiguate_query(member, &ctx) {
+            Ok(query) => (member, query),
+            Err(Error::AmbiguousQuery(_)) => (wide, disambiguate_query(wide, &ctx)?),
+            Err(e) => return Err(e),
+        },
+        None => (wide, disambiguate_query(wide, &ctx)?),
+    };
 
-    // 2. Extract metadata
+    // 3. Extract metadata
     let name = extract_name_info(node, ctx.source)
         .map(|info| info.text)
         .or_else(|| extract_identifier_from_node(node, ctx.source));
-
-    // 3. Disambiguate and anchor
-    let query = disambiguate_query(node, &ctx)?;
 
     Ok(GeneratedQuery {
         query,
@@ -229,7 +236,10 @@ pub fn generate_scoped_query(
     }
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
-    let first = find_tightest_node(&scope, source, byte_range)?;
+    // A comma-trimmed member needs no ambiguity fallback here: the loop below
+    // already widens a target whose look-alikes share its text.
+    let tightest = find_tightest_node(&scope, source, byte_range)?;
+    let first = tightest.member.unwrap_or(tightest.node);
     let mut target = descend_into_bodies_covering(first, source, byte_range);
     loop {
         let Some((query, matches)) = verified_scoped_query(target, &ctx, scope)? else {
@@ -360,7 +370,7 @@ fn find_tightest_node<'a>(
     root: &Node<'a>,
     source: &[u8],
     byte_range: (usize, usize),
-) -> Result<Node<'a>> {
+) -> Result<Tightest<'a>> {
     let mut start = byte_range.0;
     let mut end = byte_range.1;
 
@@ -381,10 +391,11 @@ fn find_tightest_node<'a>(
     // enclosing object instead of the pair on that line. Only a real `,` token
     // counts; a comma that ends a string or comment is part of that node.
     //
-    // The tighter member is taken only when it can name itself. A name is what
-    // tells it apart from its siblings; a nameless one — a PHP `match` arm, an
-    // array element — is usually shaped like its neighbours, and narrowing to
-    // it turns a bookmarkable line into an ambiguous query that is refused.
+    // The member is only a *preference*, returned alongside the wider node.
+    // It is offered only when it can name itself — a nameless member (a PHP
+    // `match` arm, an array element) is usually shaped like its neighbours —
+    // and even a named one can repeat a sibling (`[x, x]`), so the caller
+    // falls back to the wider node when the member's query is ambiguous.
     let mut member_end = end;
     if member_end > start
         && source[member_end - 1] == b','
@@ -401,10 +412,20 @@ fn find_tightest_node<'a>(
             && member.id() != node.id()
             && extract_name_info(member, source).is_some()
         {
-            return Ok(member);
+            return Ok(Tightest { node, member: Some(member) });
         }
     }
-    Ok(node)
+    Ok(Tightest { node, member: None })
+}
+
+/// What [`find_tightest_node`] resolved a selection to.
+#[derive(Clone, Copy)]
+struct Tightest<'a> {
+    /// The smallest node covering the whole selection.
+    node: Node<'a>,
+    /// A named list member inside `node` that the selection covers but for its
+    /// trailing separator comma. Preferred when its query is unique.
+    member: Option<Node<'a>>,
 }
 
 /// [`find_tightest_node`] for a range already trimmed of surrounding
@@ -788,8 +809,12 @@ fn build_structural_path(
         // (`field: None`) renders as `(intermediate (identifier) @n)`, which
         // reaches a level deeper than the lifted node would, so lifting there
         // discards the predicate rather than de-duplicating it.
+        //
+        // A field-named name with inner hops is still that one field child:
+        // a pair's `key: (string (string_fragment) @n)` *is* the key string.
+        // Not lifting there made the path ask for two string children, and
+        // `@target` slid onto the value.
         && info.field.is_some()
-        && info.inner_types.is_empty()
         && let Some(name_node) = locate_name_node(parent, &info, probe)
         && name_node.id() == current.id()
     {
@@ -822,10 +847,10 @@ fn build_structural_path(
             // renders as `(function_signature (identifier) @n)`, which reaches
             // one level deeper than the path child's own pattern and so is not
             // a duplicate — dropping it would strip the predicate that tells
-            // six Dart methods apart.
+            // six Dart methods apart. A field-named name with inner hops, like
+            // a pair's key, is still the field child itself and is dropped.
             if let Some(ref info) = name_info
                 && info.field.is_some()
-                && info.inner_types.is_empty()
                 && let Some(child) = child_on_path
                 && locate_name_node(current, info, probe).is_some_and(|n| n.id() == child.id())
             {
@@ -2255,6 +2280,50 @@ export function Label({ text }: { text: string }) {
   }
 };
 "#;
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn selecting_a_quoted_key_captures_the_key_not_the_value() {
+        // The pair names itself through this very key. Naming it *and*
+        // descending into it asks for two string children, so `@target` slid
+        // onto the value and the bookmark landed on "Springfield".
+        let source = "const obj = { \"city\": \"Springfield\" };\n";
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(source.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        let start = source.find("\"city\"").unwrap();
+        let range = (start, start + "\"city\"".len());
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+        assert!(
+            matches[0].byte_range.0 <= range.0 && matches[0].byte_range.1 >= range.1,
+            "captured {:?} ({:?}), which does not contain the selected key:\n{}",
+            matches[0].byte_range,
+            matches[0].node_text,
+            result.query
+        );
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn comma_trim_keeps_the_wider_target_when_members_look_alike() {
+        // Each `x` has a name, but the same one: narrowing to the first turns
+        // a bookmarkable line into an ambiguous query. The array is unique.
+        let source = "const values = [\n  x,\n  x,\n];\n";
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(source.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        let range = line_byte_range(source, 2);
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+    }
 
     #[tokio::test]
     #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
