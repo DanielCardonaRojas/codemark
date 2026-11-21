@@ -79,12 +79,27 @@ struct NameHop {
     /// The field this node fills in its parent, when the parent declares one.
     field: Option<String>,
     kind: String,
+    /// Must be its parent's *only* named child, rendered with anchors as
+    /// `(parent . (kind) .)`. An unanchored child pattern ignores any other
+    /// children, so a string key's `(string (string_fragment))` would also
+    /// match the `city` fragment of `"city\n"`.
+    sole: bool,
 }
 
 impl NameHop {
     /// Positional — the parent gives this child no field of its own.
     fn positional(kind: impl Into<String>) -> Self {
-        Self { field: None, kind: kind.into() }
+        Self { field: None, kind: kind.into(), sole: false }
+    }
+
+    /// [`NameHop::positional`], anchored as its parent's only named child.
+    fn sole(kind: impl Into<String>) -> Self {
+        Self { sole: true, ..Self::positional(kind) }
+    }
+
+    /// Anchor `pattern` (this hop's rendering) when it must stand alone.
+    fn anchored(&self, pattern: String) -> String {
+        if self.sole { format!(". {pattern} .") } else { pattern }
     }
 }
 
@@ -1252,6 +1267,7 @@ fn recover_nested_name<'t>(
             inner_types: vec![NameHop {
                 field: Some("name".to_string()),
                 kind: named.kind().into(),
+                sole: false,
             }],
             text: node_text(named, source),
         });
@@ -1361,9 +1377,17 @@ fn extract_name_info_direct_toward<'t>(
             // a positional `(identifier)` free to bind the declarator's `value`
             // instead of its name.
             let mut inner_types = match locate_name_node(inner, &info, probe) {
-                Some(n) => vec![NameHop { field: info.field.clone(), kind: n.kind().to_string() }],
+                Some(n) => vec![NameHop {
+                    field: info.field.clone(),
+                    kind: n.kind().to_string(),
+                    sole: false,
+                }],
                 None => {
-                    vec![NameHop { field: info.field.clone(), kind: info.direct_type.clone() }]
+                    vec![NameHop {
+                        field: info.field.clone(),
+                        kind: info.direct_type.clone(),
+                        sole: false,
+                    }]
                 }
             };
             // The inner name was itself nested; carry those levels through.
@@ -1401,7 +1425,9 @@ fn extract_name_info_direct_toward<'t>(
     // A string key is matched on its content, so the predicate compares `city`
     // rather than `"city"` with its quotes. That needs exactly one named child:
     // an escape sequence splits the content into several, and the empty string
-    // has none, so those compare the whole quoted key instead.
+    // has none, so those compare the whole quoted key instead. The content hop
+    // is anchored as the *only* child, or `"city"`'s pattern would also match
+    // the leading `city` fragment of `"city\n"`.
     if node.kind() == "pair"
         && let Some(key) = name_child_by_own_field(node, "key", probe)
     {
@@ -1409,7 +1435,7 @@ fn extract_name_info_direct_toward<'t>(
             .then(|| key.named_child(0))
             .flatten();
         let (inner_types, text) = match content {
-            Some(c) => (vec![NameHop::positional(c.kind())], node_text(c, source)),
+            Some(c) => (vec![NameHop::sole(c.kind())], node_text(c, source)),
             None => (Vec::new(), node_text(key, source)),
         };
         return Some(NameInfo {
@@ -1610,15 +1636,15 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 // name cannot be satisfied by a sibling under another field.
                 let (last, outer) =
                     info.inner_types.split_last().expect("inner_types is non-empty in this branch");
-                let mut nested = match last.field {
+                let mut nested = last.anchored(match last.field {
                     Some(ref f) => format!("{f}: ({}) @{capture_name}{sticky_suffix}", last.kind),
                     None => format!("({}) @{capture_name}{sticky_suffix}", last.kind),
-                };
+                });
                 for hop in outer.iter().rev() {
-                    nested = match hop.field {
+                    nested = hop.anchored(match hop.field {
                         Some(ref f) => format!("{f}: ({} {nested})", hop.kind),
                         None => format!("({} {nested})", hop.kind),
-                    };
+                    });
                 }
                 if let Some(ref field_name) = info.field {
                     name_pattern.push_str(&format!(
@@ -2311,6 +2337,26 @@ export function Label({ text }: { text: string }) {
 
     #[tokio::test]
     #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn a_key_does_not_match_a_longer_key_with_an_escape() {
+        // `"city\n"` parses as fragment `city` + escape `\n`. Without anchors,
+        // `"city"`'s pattern matched that leading fragment too, so the pair was
+        // ambiguous and the selection widened to the whole object.
+        let source = "const obj = {\n  \"city\": 1,\n  \"city\\n\": 2,\n};\n";
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(source.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        let range = line_byte_range(source, 2);
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert_eq!(result.target_node_type, "pair", "query:\n{}", result.query);
+        assert_eq!(result.target_name.as_deref(), Some("city"));
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn selecting_a_quoted_key_captures_the_key_not_the_value() {
         // The pair names itself through this very key. Naming it *and*
         // descending into it asks for two string children, so `@target` slid
@@ -2391,7 +2437,7 @@ export function Label({ text }: { text: string }) {
         let result =
             generate_query(&tree, PAIR_KEYS.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
         assert!(
-            result.query.contains("key: (string (string_fragment)"),
+            result.query.contains("key: (string . (string_fragment)"),
             "a string key should match on its content, without quotes:\n{}",
             result.query
         );
