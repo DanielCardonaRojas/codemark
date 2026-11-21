@@ -1588,15 +1588,10 @@ impl Component for CodePreview {
         let node_rows: Vec<(usize, usize, usize)> = focused_thread
             .map(|t| {
                 let t = &self.inline.threads[t];
-                span_cells(
-                    &self.code,
-                    (t.anchor_start, t.start_col),
-                    (t.anchor_end, t.end_col),
-                    true,
-                )
-                .into_iter()
-                .map(|(line, from, to)| (layout.row_of(line), from, to))
-                .collect()
+                block_cells(&self.code, (t.anchor_start, t.start_col), (t.anchor_end, t.end_col))
+                    .into_iter()
+                    .map(|(line, from, to)| (layout.row_of(line), from, to))
+                    .collect()
             })
             .unwrap_or_default();
         // The visual selection, end column included.
@@ -1604,7 +1599,7 @@ impl Component for CodePreview {
             .visual_selection()
             .filter(|_| self.focused)
             .map(|(start, (end_line, end_col))| {
-                span_cells(&self.code, start, (end_line, end_col + 1), false)
+                span_cells(&self.code, start, (end_line, end_col + 1))
                     .into_iter()
                     .map(|(line, from, to)| (layout.row_of(line), from, to))
                     .collect()
@@ -1637,8 +1632,9 @@ impl Component for CodePreview {
         if let Some(row) = selected_row {
             paint_row(buf, row, crate::theme::SELECTION_BG);
         }
-        // The focused comment's node: just its characters, over the cursor
-        // line's background, so the exact target reads at a glance.
+        // The focused comment's node, over the cursor line's background: its
+        // exact characters on one line, or one unbroken block from its first
+        // character to its last across several (see `block_cells`).
         let code_x = code_area.x + self.gutter_width();
         let paint_cells = |buf: &mut Buffer, rows: &[(usize, usize, usize)], color: Color| {
             for &(row, from, to) in rows {
@@ -1736,30 +1732,46 @@ fn cells_before(text: &str, col: usize) -> usize {
 }
 
 /// The span from `(line, col)` to `(line, col)` (end exclusive, columns in
-/// chars) as `(line, from cell, to cell)` per line. Middle and leading lines
-/// run to the line's end; with `skip_indent` middle and trailing lines start
-/// at their first non-blank character (a node), else at column 0 (a
-/// selection).
+/// chars) as `(line, from cell, to cell)` per line. Leading and middle lines
+/// run to the line's end; middle and trailing lines start at column 0.
 fn span_cells(
     code: &str,
     (start_line, start_col): (usize, usize),
     (end_line, end_col): (usize, usize),
-    skip_indent: bool,
 ) -> Vec<(usize, usize, usize)> {
     code.lines()
         .enumerate()
         .skip(start_line)
         .take((end_line + 1).saturating_sub(start_line))
         .map(|(line, text)| {
-            let indent = if skip_indent {
-                text.chars().take_while(|c| c.is_whitespace()).count()
-            } else {
-                0
-            };
-            let from = if line == start_line { start_col } else { indent };
+            let from = if line == start_line { start_col } else { 0 };
             let to = if line == end_line { end_col } else { text.chars().count() };
             (line, cells_before(text, from), cells_before(text, to))
         })
+        .collect()
+}
+
+/// Like [`span_cells`], but shaped as one continuous block: a node on one
+/// line keeps its exact cells, while a multi-line node runs from its first
+/// character to the right edge, covers the lines between completely
+/// (indentation, blank lines and all), and ends at its last character. A
+/// `to` of `usize::MAX` means "to the edge of the code area".
+fn block_cells(
+    code: &str,
+    (start_line, start_col): (usize, usize),
+    (end_line, end_col): (usize, usize),
+) -> Vec<(usize, usize, usize)> {
+    if start_line >= end_line {
+        return span_cells(code, (start_line, start_col), (end_line, end_col));
+    }
+    let mut lines = code.lines();
+    let cells = |line: Option<&str>, col: usize| line.map_or(0, |text| cells_before(text, col));
+    let first = cells(lines.nth(start_line), start_col);
+    let last = cells(lines.nth(end_line - start_line - 1), end_col);
+    // A node ending at column 0 stops at the line break before it.
+    std::iter::once((start_line, first, usize::MAX))
+        .chain((start_line + 1..end_line).map(|line| (line, 0, usize::MAX)))
+        .chain((last > 0).then_some((end_line, 0, last)))
         .collect()
 }
 
@@ -2692,6 +2704,36 @@ mod tests {
             "{}",
             row_text(&buf, screen_row as u16)
         );
+    }
+
+    #[test]
+    fn multi_line_node_highlights_as_one_continuous_block() {
+        // Anchored to the `if` block: line 1 col 4 through the `}` on line 4,
+        // with a blank line and deeper indentation in between.
+        let code = "fn a() {\n    if x {\n\n        call();\n    }\n}\n";
+        let mut preview = CodePreview::new(code.to_string(), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 40, 12);
+        let mut t = thread("t1", 1, 4, &["c"]);
+        (t.start_col, t.end_col) = (4, 5);
+        preview.set_threads(vec![t]);
+        preview.jump_to_line(1);
+        assert_eq!(preview.focused_thread_id(), Some("t1"));
+        let buf = render_to_buffer(&preview, 40, 12);
+        let gutter = preview.gutter_width();
+        let lit = |x: u16, y: u16| buf[(x, y)].bg == crate::theme::COMMENT_ANCHOR_BG;
+        // Code row of each line: line 1 is followed by its bubble rows.
+        let row = |needle: &str| (0..12).find(|&y| row_text(&buf, y).contains(needle)).unwrap();
+        let (first, call, last) = (row("if x"), row("call()"), row("    }"));
+        let blank = call - 1;
+        assert!(!lit(gutter + 3, first) && lit(gutter + 4, first), "starts on the `if`");
+        assert!(lit(gutter + 30, first), "first line runs to the edge");
+        for y in [blank, call] {
+            assert!(lit(gutter, y) && lit(gutter + 30, y), "middle row {y} is fully lit");
+        }
+        assert!(lit(gutter, last) && lit(gutter + 4, last), "last line starts at column 0");
+        assert!(!lit(gutter + 5, last), "and ends on the `}}`");
+        assert!(!lit(gutter, last + 1), "nothing past the node");
     }
 
     #[test]

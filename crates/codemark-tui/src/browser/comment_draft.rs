@@ -55,6 +55,8 @@ pub(crate) struct CommentDraft {
     /// The furthest the Query tab can scroll, as of its last render (wrapping
     /// depends on the modal's width, which only rendering knows).
     query_scroll_max: std::cell::Cell<usize>,
+    /// Where the Query tab was last drawn, so only the wheel over it scrolls.
+    query_area: std::cell::Cell<ratatui::layout::Rect>,
 }
 
 impl CommentDraft {
@@ -72,7 +74,15 @@ impl CommentDraft {
             tab: DraftTab::Body,
             query_scroll: 0,
             query_scroll_max: Default::default(),
+            query_area: Default::default(),
         }
+    }
+
+    /// Move the Query tab by `delta` wrapped rows, clamped to what its last
+    /// render could show.
+    fn scroll_query(&mut self, delta: isize) {
+        let max = self.query_scroll_max.get();
+        self.query_scroll = self.query_scroll.min(max).saturating_add_signed(delta).min(max);
     }
 
     fn title(&self) -> &'static str {
@@ -297,21 +307,40 @@ impl BrowserLayout {
                     DraftTab::Query => DraftTab::Body,
                 };
             }
-            _ if draft.tab == DraftTab::Query => {
-                let max = draft.query_scroll_max.get();
-                match key.code {
-                    KeyCode::Up => {
-                        draft.query_scroll = draft.query_scroll.min(max).saturating_sub(1)
-                    }
-                    KeyCode::Down => draft.query_scroll = (draft.query_scroll + 1).min(max),
-                    KeyCode::Home => draft.query_scroll = 0,
-                    _ => {}
-                }
-            }
+            _ if draft.tab == DraftTab::Query => match key.code {
+                KeyCode::Up => draft.scroll_query(-1),
+                KeyCode::Down => draft.scroll_query(1),
+                KeyCode::Home => draft.query_scroll = 0,
+                _ => {}
+            },
             _ => {
                 draft.body.handle_key(key);
             }
         }
+    }
+
+    /// The mouse wheel over the draft's Query tab scrolls it (the body
+    /// follows its caret instead; the wheel elsewhere does nothing). The modal swallows mouse input, so
+    /// this is always handled.
+    pub(super) fn handle_comment_draft_mouse(
+        &mut self,
+        mouse: &ratatui::crossterm::event::MouseEvent,
+    ) {
+        use ratatui::crossterm::event::MouseEventKind;
+        let Some(draft) = self.comment_draft.as_mut() else { return };
+        let over_query = draft
+            .query_area
+            .get()
+            .contains(ratatui::layout::Position::new(mouse.column, mouse.row));
+        if draft.tab != DraftTab::Query || !over_query {
+            return;
+        }
+        match mouse.kind {
+            MouseEventKind::ScrollDown => draft.scroll_query(1),
+            MouseEventKind::ScrollUp => draft.scroll_query(-1),
+            _ => return,
+        }
+        tracing::debug!(target: "codemark::comments", scroll = draft.query_scroll, "draft query wheel scroll");
     }
 
     /// Close the draft modal. A new comment ends the visual selection it was
@@ -455,6 +484,7 @@ impl BrowserLayout {
             let query = Paragraph::new(lines).wrap(Wrap { trim: false });
             let max = query.line_count(body_area.width).saturating_sub(body_area.height as usize);
             draft.query_scroll_max.set(max);
+            draft.query_area.set(body_area);
             let scroll = draft.query_scroll.min(max) as u16;
             query.scroll((scroll, 0)).render(body_area, buf);
             return;
@@ -761,6 +791,47 @@ mod tests {
         // Down stops at the end, so one Up moves at once.
         layout.handle_event(&key(KeyCode::Up));
         let max = layout.comment_draft.as_ref().unwrap().query_scroll_max.get();
+        assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, max - 1);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_the_query_tab() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{
+            KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
+        };
+        let (mut layout, _dir) = layout_with_draft();
+        let long = format!("(call {} TAIL) @target", "x ".repeat(400));
+        layout.comment_draft.as_mut().unwrap().kind = DraftKind::Anchored(CommentAnchor {
+            query: long,
+            content_hash: "abc123".into(),
+            anchor_hint: "L3: ping();".into(),
+        });
+        let wheel = |kind| {
+            Event::Mouse(MouseEvent { kind, column: 10, row: 10, modifiers: KeyModifiers::NONE })
+        };
+        // On the body tab the wheel does nothing.
+        rendered_text(&layout);
+        layout.handle_event(&wheel(MouseEventKind::ScrollDown));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, 0);
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)));
+        rendered_text(&layout);
+        // Outside the box (the screen's corner) the wheel does nothing.
+        layout.handle_event(&Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, 0);
+        for _ in 0..40 {
+            layout.handle_event(&wheel(MouseEventKind::ScrollDown));
+        }
+        let shown = rendered_text(&layout);
+        assert!(shown.contains("TAIL"), "{shown}");
+        let max = layout.comment_draft.as_ref().unwrap().query_scroll_max.get();
+        assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, max);
+        layout.handle_event(&wheel(MouseEventKind::ScrollUp));
         assert_eq!(layout.comment_draft.as_ref().unwrap().query_scroll, max - 1);
     }
 
