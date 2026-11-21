@@ -79,12 +79,27 @@ struct NameHop {
     /// The field this node fills in its parent, when the parent declares one.
     field: Option<String>,
     kind: String,
+    /// Must be its parent's *only* named child, rendered with anchors as
+    /// `(parent . (kind) .)`. An unanchored child pattern ignores any other
+    /// children, so a string key's `(string (string_fragment))` would also
+    /// match the `city` fragment of `"city\n"`.
+    sole: bool,
 }
 
 impl NameHop {
     /// Positional — the parent gives this child no field of its own.
     fn positional(kind: impl Into<String>) -> Self {
-        Self { field: None, kind: kind.into() }
+        Self { field: None, kind: kind.into(), sole: false }
+    }
+
+    /// [`NameHop::positional`], anchored as its parent's only named child.
+    fn sole(kind: impl Into<String>) -> Self {
+        Self { sole: true, ..Self::positional(kind) }
+    }
+
+    /// Anchor `pattern` (this hop's rendering) when it must stand alone.
+    fn anchored(&self, pattern: String) -> String {
+        if self.sole { format!(". {pattern} .") } else { pattern }
     }
 }
 
@@ -126,17 +141,32 @@ pub fn generate_query(
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
     // 1. Select the tightest meaningful target node
-    let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
+    let tightest = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
-    node = descend_into_bodies(node, ctx.source, ctx.byte_range);
+    // 2. Disambiguate and anchor. A comma-trimmed member is tried first; when
+    //    it repeats a sibling, the wider node the selection covers is kept.
+    let wide = descend_into_bodies(tightest.node, ctx.source, ctx.byte_range);
+    let (node, query) = match tightest.member {
+        Some(member) => match disambiguate_query(member, &ctx) {
+            Ok(query) => (member, query),
+            Err(Error::AmbiguousQuery(_)) => (wide, disambiguate_query(wide, &ctx)?),
+            Err(e) => return Err(e),
+        },
+        None => (wide, disambiguate_query(wide, &ctx)?),
+    };
 
-    // 2. Extract metadata
+    // The query may capture an ancestor of the selection: a selected name
+    // lifts to the node it names (a key to its pair). Report the node it
+    // actually captures, since the bookmark's content hash is taken over this
+    // range and resolution compares it with what the query finds — reporting
+    // the key while capturing the pair made the bookmark drift with no edit.
+    // `generate_scoped_query` does the same.
+    let node = captured_ancestor(node, &query, &ctx).unwrap_or(node);
+
+    // 3. Extract metadata
     let name = extract_name_info(node, ctx.source)
         .map(|info| info.text)
         .or_else(|| extract_identifier_from_node(node, ctx.source));
-
-    // 3. Disambiguate and anchor
-    let query = disambiguate_query(node, &ctx)?;
 
     Ok(GeneratedQuery {
         query,
@@ -229,7 +259,10 @@ pub fn generate_scoped_query(
     }
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
-    let first = find_tightest_node(&scope, source, byte_range)?;
+    // A comma-trimmed member needs no ambiguity fallback here: the loop below
+    // already widens a target whose look-alikes share its text.
+    let tightest = find_tightest_node(&scope, source, byte_range)?;
+    let first = tightest.member.unwrap_or(tightest.node);
     let mut target = descend_into_bodies_covering(first, source, byte_range);
     loop {
         let Some((query, matches)) = verified_scoped_query(target, &ctx, scope)? else {
@@ -262,6 +295,26 @@ pub fn generate_scoped_query(
                 });
             }
         }
+    }
+}
+
+/// The node `query` captures for `target`: `target` itself or the ancestor
+/// whose range the smallest containing capture spans. `None` when the query
+/// captures nothing containing `target`, or the capture is no node on its
+/// ancestor chain.
+fn captured_ancestor<'t>(
+    target: Node<'t>,
+    query: &str,
+    ctx: &QueryContext<'t>,
+) -> Option<Node<'t>> {
+    let matches = matcher::run_query_in(query, ctx.root, ctx.source, ctx.language).ok()?;
+    let (start, end) = smallest_capture_of(&matches, target)?.byte_range;
+    let mut node = target;
+    loop {
+        if (node.start_byte(), node.end_byte()) == (start, end) {
+            return Some(node);
+        }
+        node = node.parent()?;
     }
 }
 
@@ -360,7 +413,7 @@ fn find_tightest_node<'a>(
     root: &Node<'a>,
     source: &[u8],
     byte_range: (usize, usize),
-) -> Result<Node<'a>> {
+) -> Result<Tightest<'a>> {
     let mut start = byte_range.0;
     let mut end = byte_range.1;
 
@@ -372,6 +425,55 @@ fn find_tightest_node<'a>(
         end -= 1;
     }
 
+    let node = node_for_trimmed_range(root, start, end)?;
+
+    // A trailing separator comma. A list member — a JSON or object-literal
+    // `pair`, a struct field — stops before its comma, which the grammar makes
+    // a sibling token of the parent. Left in, it makes the selected line wider
+    // than the member, so `"city": "Springfield",` resolved to the whole
+    // enclosing object instead of the pair on that line. Only a real `,` token
+    // counts; a comma that ends a string or comment is part of that node.
+    //
+    // The member is only a *preference*, returned alongside the wider node.
+    // It is offered only when it can name itself — a nameless member (a PHP
+    // `match` arm, an array element) is usually shaped like its neighbours —
+    // and even a named one can repeat a sibling (`[x, x]`), so the caller
+    // falls back to the wider node when the member's query is ambiguous.
+    let mut member_end = end;
+    if member_end > start
+        && source[member_end - 1] == b','
+        && root
+            .descendant_for_byte_range(member_end - 1, member_end)
+            .is_some_and(|n| n.kind() == ",")
+    {
+        member_end -= 1;
+        while member_end > start && (source[member_end - 1] as char).is_whitespace() {
+            member_end -= 1;
+        }
+        if member_end > start
+            && let Ok(member) = node_for_trimmed_range(root, start, member_end)
+            && member.id() != node.id()
+            && extract_name_info(member, source).is_some()
+        {
+            return Ok(Tightest { node, member: Some(member) });
+        }
+    }
+    Ok(Tightest { node, member: None })
+}
+
+/// What [`find_tightest_node`] resolved a selection to.
+#[derive(Clone, Copy)]
+struct Tightest<'a> {
+    /// The smallest node covering the whole selection.
+    node: Node<'a>,
+    /// A named list member inside `node` that the selection covers but for its
+    /// trailing separator comma. Preferred when its query is unique.
+    member: Option<Node<'a>>,
+}
+
+/// [`find_tightest_node`] for a range already trimmed of surrounding
+/// whitespace.
+fn node_for_trimmed_range<'a>(root: &Node<'a>, start: usize, end: usize) -> Result<Node<'a>> {
     if start == end {
         // Point range: pick the deepest named node at this position
         let mut node = root
@@ -750,8 +852,12 @@ fn build_structural_path(
         // (`field: None`) renders as `(intermediate (identifier) @n)`, which
         // reaches a level deeper than the lifted node would, so lifting there
         // discards the predicate rather than de-duplicating it.
+        //
+        // A field-named name with inner hops is still that one field child:
+        // a pair's `key: (string (string_fragment) @n)` *is* the key string.
+        // Not lifting there made the path ask for two string children, and
+        // `@target` slid onto the value.
         && info.field.is_some()
-        && info.inner_types.is_empty()
         && let Some(name_node) = locate_name_node(parent, &info, probe)
         && name_node.id() == current.id()
     {
@@ -784,10 +890,10 @@ fn build_structural_path(
             // renders as `(function_signature (identifier) @n)`, which reaches
             // one level deeper than the path child's own pattern and so is not
             // a duplicate — dropping it would strip the predicate that tells
-            // six Dart methods apart.
+            // six Dart methods apart. A field-named name with inner hops, like
+            // a pair's key, is still the field child itself and is dropped.
             if let Some(ref info) = name_info
                 && info.field.is_some()
-                && info.inner_types.is_empty()
                 && let Some(child) = child_on_path
                 && locate_name_node(current, info, probe).is_some_and(|n| n.id() == child.id())
             {
@@ -1161,6 +1267,7 @@ fn recover_nested_name<'t>(
             inner_types: vec![NameHop {
                 field: Some("name".to_string()),
                 kind: named.kind().into(),
+                sole: false,
             }],
             text: node_text(named, source),
         });
@@ -1270,9 +1377,17 @@ fn extract_name_info_direct_toward<'t>(
             // a positional `(identifier)` free to bind the declarator's `value`
             // instead of its name.
             let mut inner_types = match locate_name_node(inner, &info, probe) {
-                Some(n) => vec![NameHop { field: info.field.clone(), kind: n.kind().to_string() }],
+                Some(n) => vec![NameHop {
+                    field: info.field.clone(),
+                    kind: n.kind().to_string(),
+                    sole: false,
+                }],
                 None => {
-                    vec![NameHop { field: info.field.clone(), kind: info.direct_type.clone() }]
+                    vec![NameHop {
+                        field: info.field.clone(),
+                        kind: info.direct_type.clone(),
+                        sole: false,
+                    }]
                 }
             };
             // The inner name was itself nested; carry those levels through.
@@ -1295,6 +1410,39 @@ fn extract_name_info_direct_toward<'t>(
             direct_type: pattern.kind().to_string(),
             inner_types: Vec::new(),
             text: node_text(pattern, source),
+        });
+    }
+
+    // For an object-literal `pair` (JSON, JavaScript, TypeScript): the key.
+    //
+    // A pair names itself through `key`, not `name`, so without this branch it
+    // is nameless and every query through it is purely positional. That is
+    // tolerable in code, where an object literal is a leaf, but in JSON the
+    // pairs *are* the structure: `customer.address.city` and
+    // `supplier.address.city` produced the same query and every nested line in
+    // a JSON document was refused as ambiguous.
+    //
+    // A string key is matched on its content, so the predicate compares `city`
+    // rather than `"city"` with its quotes. That needs exactly one named child:
+    // an escape sequence splits the content into several, and the empty string
+    // has none, so those compare the whole quoted key instead. The content hop
+    // is anchored as the *only* child, or `"city"`'s pattern would also match
+    // the leading `city` fragment of `"city\n"`.
+    if node.kind() == "pair"
+        && let Some(key) = name_child_by_own_field(node, "key", probe)
+    {
+        let content = (key.kind() == "string" && key.named_child_count() == 1)
+            .then(|| key.named_child(0))
+            .flatten();
+        let (inner_types, text) = match content {
+            Some(c) => (vec![NameHop::sole(c.kind())], node_text(c, source)),
+            None => (Vec::new(), node_text(key, source)),
+        };
+        return Some(NameInfo {
+            field: Some("key".to_string()),
+            direct_type: key.kind().to_string(),
+            inner_types,
+            text,
         });
     }
 
@@ -1488,15 +1636,15 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 // name cannot be satisfied by a sibling under another field.
                 let (last, outer) =
                     info.inner_types.split_last().expect("inner_types is non-empty in this branch");
-                let mut nested = match last.field {
+                let mut nested = last.anchored(match last.field {
                     Some(ref f) => format!("{f}: ({}) @{capture_name}{sticky_suffix}", last.kind),
                     None => format!("({}) @{capture_name}{sticky_suffix}", last.kind),
-                };
+                });
                 for hop in outer.iter().rev() {
-                    nested = match hop.field {
+                    nested = hop.anchored(match hop.field {
                         Some(ref f) => format!("{f}: ({} {nested})", hop.kind),
                         None => format!("({} {nested})", hop.kind),
-                    };
+                    });
                 }
                 if let Some(ref field_name) = info.field {
                     name_pattern.push_str(&format!(
@@ -2159,6 +2307,149 @@ export function Label({ text }: { text: string }) {
         let matches =
             matcher::run_query(&result.query, &edited_tree, edited.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query after edit:\n{}", result.query);
+    }
+
+    /// Byte range of 1-based `line`, without its newline — what `--range N`
+    /// hands the generator.
+    fn line_byte_range(source: &str, line: usize) -> (usize, usize) {
+        let start = source.lines().take(line - 1).map(|l| l.len() + 1).sum::<usize>();
+        (start, start + source.lines().nth(line - 1).unwrap().len())
+    }
+
+    /// The `"city": ...,` line in two objects that differ only in their keys —
+    /// the shape of every nested line in a JSON document, where `pair` is the
+    /// only kind with a name.
+    const PAIR_KEYS: &str = r#"const invoice = {
+  "customer": {
+    "address": {
+      "city": "Springfield",
+      "country": "US"
+    }
+  },
+  "supplier": {
+    "address": {
+      "city": "Shelbyville",
+      "country": "US"
+    }
+  }
+};
+"#;
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn a_key_does_not_match_a_longer_key_with_an_escape() {
+        // `"city\n"` parses as fragment `city` + escape `\n`. Without anchors,
+        // `"city"`'s pattern matched that leading fragment too, so the pair was
+        // ambiguous and the selection widened to the whole object.
+        let source = "const obj = {\n  \"city\": 1,\n  \"city\\n\": 2,\n};\n";
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(source.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        let range = line_byte_range(source, 2);
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert_eq!(result.target_node_type, "pair", "query:\n{}", result.query);
+        assert_eq!(result.target_name.as_deref(), Some("city"));
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn selecting_a_quoted_key_captures_the_key_not_the_value() {
+        // The pair names itself through this very key. Naming it *and*
+        // descending into it asks for two string children, so `@target` slid
+        // onto the value and the bookmark landed on "Springfield".
+        let source = "const obj = { \"city\": \"Springfield\" };\n";
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(source.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        let start = source.find("\"city\"").unwrap();
+        let range = (start, start + "\"city\"".len());
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+        assert!(
+            matches[0].byte_range.0 <= range.0 && matches[0].byte_range.1 >= range.1,
+            "captured {:?} ({:?}), which does not contain the selected key:\n{}",
+            matches[0].byte_range,
+            matches[0].node_text,
+            result.query
+        );
+        // The bookmark's content hash is taken over `byte_range` and compared
+        // against what resolution captures. Reporting the key while the query
+        // captures the pair made every such bookmark drift without an edit.
+        assert_eq!(
+            result.byte_range, matches[0].byte_range,
+            "reported range differs from the captured node:\n{}",
+            result.query
+        );
+        assert_eq!(result.target_node_type, "pair");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn comma_trim_keeps_the_wider_target_when_members_look_alike() {
+        // Each `x` has a name, but the same one: narrowing to the first turns
+        // a bookmarkable line into an ambiguous query. The array is unique.
+        let source = "const values = [\n  x,\n  x,\n];\n";
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(source.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        let range = line_byte_range(source, 2);
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn pair_line_with_trailing_comma_targets_the_pair() {
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(PAIR_KEYS.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        // The comma after the value is a sibling of the pair, not part of it.
+        // Selecting the whole line used to resolve to the enclosing object.
+        let range = line_byte_range(PAIR_KEYS, 4);
+        let result =
+            generate_query(&tree, PAIR_KEYS.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert_eq!(result.target_node_type, "pair", "query:\n{}", result.query);
+        assert_eq!(result.target_name.as_deref(), Some("city"));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    async fn pair_keys_disambiguate_identically_shaped_objects() {
+        let cm_lang = crate::testing::grammar("typescript");
+        let tree = Parser::new(cm_lang.clone()).unwrap().parse(PAIR_KEYS.as_bytes()).unwrap();
+        let lang = cm_lang.tree_sitter_language();
+
+        // `supplier.address.city`. Without key names the path is just
+        // pair > object > pair > object > pair, which `customer` matches too.
+        let range = line_byte_range(PAIR_KEYS, 10);
+        let result =
+            generate_query(&tree, PAIR_KEYS.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert!(
+            result.query.contains("key: (string . (string_fragment)"),
+            "a string key should match on its content, without quotes:\n{}",
+            result.query
+        );
+
+        let matches =
+            matcher::run_query(&result.query, &tree, PAIR_KEYS.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+        assert_eq!(
+            matches[0].start_point.0, 9,
+            "matched the wrong `city` — the query lost a key on the way down:\n{}",
+            result.query
+        );
     }
 
     // --- Python tests ---
