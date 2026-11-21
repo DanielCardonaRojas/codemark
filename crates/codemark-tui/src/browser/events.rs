@@ -25,7 +25,10 @@ impl BrowserLayout {
         if self.has_active_dialog() {
             match event {
                 Event::Key(key) => return self.handle_dialog_key(key),
-                Event::Mouse(_) => return true,
+                Event::Mouse(mouse) => {
+                    self.handle_comment_draft_mouse(mouse);
+                    return true;
+                }
                 // A paste goes into the open modal (the branch picker's
                 // filter or the comment draft), never the search bar behind it.
                 Event::Paste(text) => {

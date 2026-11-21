@@ -922,6 +922,8 @@ impl CodePreview {
         let t = &self.inline.threads[thread];
         self.inline.cursor_on = Some(t.root_id.clone());
         self.selected_line = Some(t.anchor_start.min(self.line_count().saturating_sub(1)));
+        self.cursor_col = t.start_col;
+        self.clamp_cursor_col();
         self.visual_anchor = None;
         self.scroll_to_cursor();
         self.user_moved = true;
@@ -1079,6 +1081,24 @@ impl CodePreview {
         self.render_scrollbar(area.right().saturating_sub(1), buf);
     }
 
+    /// Whether keys reach the preview's cursor: the preview has focus, or the
+    /// side panel does while threads are beside the code (its keys pick
+    /// threads, moving the preview's cursor).
+    fn has_active_focus(&self) -> bool {
+        self.focused || (self.inline.rail_focused.get() && self.inline.beside.get())
+    }
+
+    /// The narrowest thread whose anchored lines contain `line`.
+    fn narrowest_thread_at(&self, line: usize) -> Option<usize> {
+        self.inline
+            .threads
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.anchor_start <= line && line <= t.anchor_end)
+            .min_by_key(|(_, t)| t.anchor_end - t.anchor_start)
+            .map(|(i, _)| i)
+    }
+
     /// Index of the thread whose bubble the cursor is on.
     fn cursor_thread(&self) -> Option<usize> {
         let id = self.inline.cursor_on.as_deref()?;
@@ -1089,20 +1109,13 @@ impl CodePreview {
     /// narrowest thread whose anchored lines contain the cursor line. Only
     /// while the preview has focus.
     fn focused_thread(&self) -> Option<usize> {
-        if !self.focused && !(self.inline.rail_focused.get() && self.inline.beside.get()) {
+        if !self.has_active_focus() {
             return None;
         }
         if let Some(t) = self.cursor_thread() {
             return Some(t);
         }
-        let line = self.selected_line?;
-        self.inline
-            .threads
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.anchor_start <= line && line <= t.anchor_end)
-            .min_by_key(|(_, t)| t.anchor_end - t.anchor_start)
-            .map(|(i, _)| i)
+        self.narrowest_thread_at(self.selected_line?)
     }
 
     /// Root id of the thread the cursor is on (see [`Self::focused_thread`]).
@@ -1141,7 +1154,8 @@ impl CodePreview {
 
     /// `z`: on a bubble, fold that thread (the cursor returns to its line);
     /// on a code line with threads under it, fold them all, or unfold them
-    /// all when every one is folded. Returns `false` when there is nothing to
+    /// all when every one is folded. Any other line of a thread's node
+    /// toggles that thread. Returns `false` when there is nothing to
     /// fold, so the key can fall through.
     fn toggle_fold(&mut self) -> bool {
         // Beside the code, fold the picked thread's bubble in the side panel
@@ -1169,11 +1183,14 @@ impl CodePreview {
             return true;
         }
         let Some(line) = self.selected_line else { return false };
-        let ids: Vec<String> = self
-            .threads_under(line)
-            .into_iter()
-            .map(|i| self.inline.threads[i].root_id.clone())
-            .collect();
+        // The threads whose bubbles hang under this line, else (on an upper
+        // line of a multi-line node) the narrowest thread anchored over it.
+        let mut under = self.threads_under(line);
+        if under.is_empty() {
+            under.extend(self.narrowest_thread_at(line));
+        }
+        let ids: Vec<String> =
+            under.into_iter().map(|i| self.inline.threads[i].root_id.clone()).collect();
         if ids.is_empty() {
             return false;
         }
@@ -1331,6 +1348,11 @@ impl CodePreview {
         } else {
             self.thread_line(thread)
         });
+        if beside {
+            // The block cursor marks the node's first character.
+            self.cursor_col = thread.start_col;
+            self.clamp_cursor_col();
+        }
         // A selection can't end on a bubble: leave visual mode.
         self.visual_anchor = None;
         self.inline.cursor_on = Some(id);
@@ -1532,7 +1554,7 @@ impl Component for CodePreview {
             let expanded = !self.inline.folded.contains(&t.root_id);
             *comment_signs.entry(line).or_default() |= expanded;
         }
-        let cursor_thread = self.cursor_thread().filter(|_| self.focused);
+        let cursor_thread = self.cursor_thread().filter(|_| self.has_active_focus());
 
         // Build only the visible rows: the paragraph is rendered pre-scrolled.
         // Clamp to the content: an offset set before the first frame (no
@@ -1588,15 +1610,10 @@ impl Component for CodePreview {
         let node_rows: Vec<(usize, usize, usize)> = focused_thread
             .map(|t| {
                 let t = &self.inline.threads[t];
-                span_cells(
-                    &self.code,
-                    (t.anchor_start, t.start_col),
-                    (t.anchor_end, t.end_col),
-                    true,
-                )
-                .into_iter()
-                .map(|(line, from, to)| (layout.row_of(line), from, to))
-                .collect()
+                block_cells(&self.code, (t.anchor_start, t.start_col), (t.anchor_end, t.end_col))
+                    .into_iter()
+                    .map(|(line, from, to)| (layout.row_of(line), from, to))
+                    .collect()
             })
             .unwrap_or_default();
         // The visual selection, end column included.
@@ -1604,7 +1621,7 @@ impl Component for CodePreview {
             .visual_selection()
             .filter(|_| self.focused)
             .map(|(start, (end_line, end_col))| {
-                span_cells(&self.code, start, (end_line, end_col + 1), false)
+                span_cells(&self.code, start, (end_line, end_col + 1))
                     .into_iter()
                     .map(|(line, from, to)| (layout.row_of(line), from, to))
                     .collect()
@@ -1612,8 +1629,14 @@ impl Component for CodePreview {
             .unwrap_or_default();
         // The cursor is on a code line, or on a bubble (shown by its border).
         let cursor_bubble = cursor_thread.and_then(|t| layout.bubble_rows(t));
-        let selected_row =
+        let cursor_row =
             self.selected_line.filter(|_| cursor_bubble.is_none()).map(|line| layout.row_of(line));
+        // A thread picked beside the code (`n` / `N`, a click in the side
+        // list) already shows its node; the cursor line's background over it
+        // just muddies it, so only the block cursor marks the spot until the
+        // cursor moves off the thread.
+        let picked_beside = self.inline.beside.get() && cursor_thread.is_some();
+        let selected_row = cursor_row.filter(|_| !picked_beside);
         drop(layout);
         drop(cached); // Drop cached before rendering
 
@@ -1637,8 +1660,9 @@ impl Component for CodePreview {
         if let Some(row) = selected_row {
             paint_row(buf, row, crate::theme::SELECTION_BG);
         }
-        // The focused comment's node: just its characters, over the cursor
-        // line's background, so the exact target reads at a glance.
+        // The focused comment's node, over the cursor line's background: its
+        // exact characters on one line, or one unbroken block from its first
+        // character to its last across several (see `block_cells`).
         let code_x = code_area.x + self.gutter_width();
         let paint_cells = |buf: &mut Buffer, rows: &[(usize, usize, usize)], color: Color| {
             for &(row, from, to) in rows {
@@ -1664,9 +1688,8 @@ impl Component for CodePreview {
         // Draw the block cursor on the focused row/column. Painted on top of the
         // selection background by reversing the cell under the cursor, so it
         // keeps the underlying character and stays theme-independent.
-        if self.focused
-            && self.selection_mode
-            && let Some(row) = selected_row
+        if ((self.focused && self.selection_mode) || picked_beside)
+            && let Some(row) = cursor_row
             && row >= offset
         {
             let screen_row = (row - offset) as u16;
@@ -1736,30 +1759,46 @@ fn cells_before(text: &str, col: usize) -> usize {
 }
 
 /// The span from `(line, col)` to `(line, col)` (end exclusive, columns in
-/// chars) as `(line, from cell, to cell)` per line. Middle and leading lines
-/// run to the line's end; with `skip_indent` middle and trailing lines start
-/// at their first non-blank character (a node), else at column 0 (a
-/// selection).
+/// chars) as `(line, from cell, to cell)` per line. Leading and middle lines
+/// run to the line's end; middle and trailing lines start at column 0.
 fn span_cells(
     code: &str,
     (start_line, start_col): (usize, usize),
     (end_line, end_col): (usize, usize),
-    skip_indent: bool,
 ) -> Vec<(usize, usize, usize)> {
     code.lines()
         .enumerate()
         .skip(start_line)
         .take((end_line + 1).saturating_sub(start_line))
         .map(|(line, text)| {
-            let indent = if skip_indent {
-                text.chars().take_while(|c| c.is_whitespace()).count()
-            } else {
-                0
-            };
-            let from = if line == start_line { start_col } else { indent };
+            let from = if line == start_line { start_col } else { 0 };
             let to = if line == end_line { end_col } else { text.chars().count() };
             (line, cells_before(text, from), cells_before(text, to))
         })
+        .collect()
+}
+
+/// Like [`span_cells`], but shaped as one continuous block: a node on one
+/// line keeps its exact cells, while a multi-line node runs from its first
+/// character to the right edge, covers the lines between completely
+/// (indentation, blank lines and all), and ends at its last character. A
+/// `to` of `usize::MAX` means "to the edge of the code area".
+fn block_cells(
+    code: &str,
+    (start_line, start_col): (usize, usize),
+    (end_line, end_col): (usize, usize),
+) -> Vec<(usize, usize, usize)> {
+    if start_line >= end_line {
+        return span_cells(code, (start_line, start_col), (end_line, end_col));
+    }
+    let mut lines = code.lines();
+    let cells = |line: Option<&str>, col: usize| line.map_or(0, |text| cells_before(text, col));
+    let first = cells(lines.nth(start_line), start_col);
+    let last = cells(lines.nth(end_line - start_line - 1), end_col);
+    // A node ending at column 0 stops at the line break before it.
+    std::iter::once((start_line, first, usize::MAX))
+        .chain((start_line + 1..end_line).map(|line| (line, 0, usize::MAX)))
+        .chain((last > 0).then_some((end_line, 0, last)))
         .collect()
 }
 
@@ -2446,6 +2485,32 @@ mod tests {
     }
 
     #[test]
+    fn z_toggles_a_multi_line_thread_from_any_of_its_lines() {
+        let mut preview = CodePreview::new(numbered_code(8), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 30);
+        // An outer thread over lines 1-5 and a narrower one over 2-4.
+        preview.set_threads(vec![thread("outer", 1, 5, &["o"]), thread("inner", 2, 4, &["i"])]);
+        let z = key(ratatui::crossterm::event::KeyCode::Char('z'));
+
+        // The node's first line folds the thread, and unfolds it again.
+        preview.jump_to_line(1);
+        assert!(preview.handle_event(&z));
+        assert_eq!(preview.inline.folded.iter().collect::<Vec<_>>(), vec!["outer"]);
+        assert!(preview.handle_event(&z));
+        assert!(preview.inline.folded.is_empty());
+
+        // A middle line toggles the narrowest thread over it.
+        preview.jump_to_line(3);
+        assert!(preview.handle_event(&z));
+        assert_eq!(preview.inline.folded.iter().collect::<Vec<_>>(), vec!["inner"]);
+
+        // Outside every node, `z` has nothing to do.
+        preview.jump_to_line(7);
+        assert!(!preview.handle_event(&z));
+    }
+
+    #[test]
     fn clicking_a_bubble_focuses_it_and_clicking_code_moves_the_cursor() {
         use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let click = |row: u16| {
@@ -2695,6 +2760,36 @@ mod tests {
     }
 
     #[test]
+    fn multi_line_node_highlights_as_one_continuous_block() {
+        // Anchored to the `if` block: line 1 col 4 through the `}` on line 4,
+        // with a blank line and deeper indentation in between.
+        let code = "fn a() {\n    if x {\n\n        call();\n    }\n}\n";
+        let mut preview = CodePreview::new(code.to_string(), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 40, 12);
+        let mut t = thread("t1", 1, 4, &["c"]);
+        (t.start_col, t.end_col) = (4, 5);
+        preview.set_threads(vec![t]);
+        preview.jump_to_line(1);
+        assert_eq!(preview.focused_thread_id(), Some("t1"));
+        let buf = render_to_buffer(&preview, 40, 12);
+        let gutter = preview.gutter_width();
+        let lit = |x: u16, y: u16| buf[(x, y)].bg == crate::theme::COMMENT_ANCHOR_BG;
+        // Code row of each line: line 1 is followed by its bubble rows.
+        let row = |needle: &str| (0..12).find(|&y| row_text(&buf, y).contains(needle)).unwrap();
+        let (first, call, last) = (row("if x"), row("call()"), row("    }"));
+        let blank = call - 1;
+        assert!(!lit(gutter + 3, first) && lit(gutter + 4, first), "starts on the `if`");
+        assert!(lit(gutter + 30, first), "first line runs to the edge");
+        for y in [blank, call] {
+            assert!(lit(gutter, y) && lit(gutter + 30, y), "middle row {y} is fully lit");
+        }
+        assert!(lit(gutter, last) && lit(gutter + 4, last), "last line starts at column 0");
+        assert!(!lit(gutter + 5, last), "and ends on the `}}`");
+        assert!(!lit(gutter, last + 1), "nothing past the node");
+    }
+
+    #[test]
     fn node_highlight_counts_wide_characters_as_two_cells() {
         // `界` is one char but two terminal cells, so `call()` starts at cell 8.
         let mut preview = CodePreview::new("x\n界 = 1; call();\n".to_string(), "txt");
@@ -2783,6 +2878,56 @@ mod tests {
         assert!(row_from(&buf, 30, 2).contains("┌ claude"), "{}", row_from(&buf, 30, 2));
         assert!(row_from(&buf, 30, 3).contains("second"));
         assert_eq!(preview.selected_line, Some(2), "the cursor is on the node's first line");
+    }
+
+    #[test]
+    fn landing_on_a_thread_beside_the_code_shows_only_the_block_cursor() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        preview.set_focus(true);
+        let mut t = thread("a", 1, 1, &["first"]);
+        (t.start_col, t.end_col) = (2, 4);
+        preview.set_threads(vec![t]);
+        render_beside(&preview, 30, 44, 10);
+        assert!(preview.handle_event(&key(KeyCode::Char('n'))));
+        let buf = render_beside(&preview, 30, 44, 10);
+        let gutter = preview.gutter_width();
+        assert!(
+            (0..30).all(|x| buf[(x, 1)].bg != crate::theme::SELECTION_BG),
+            "no cursor-line background under the picked node"
+        );
+        assert!(
+            (gutter + 2..gutter + 4).all(|x| buf[(x, 1)].bg == crate::theme::COMMENT_ANCHOR_BG)
+        );
+        let cursor = &buf[(gutter + 2, 1)];
+        assert!(
+            cursor.modifier.contains(Modifier::REVERSED),
+            "block cursor on the node's first character"
+        );
+
+        // Moving off the thread brings the cursor line back.
+        assert!(preview.handle_event(&key(KeyCode::Char('j'))));
+        let buf = render_beside(&preview, 30, 44, 10);
+        assert_eq!(buf[(0, 2)].bg, crate::theme::SELECTION_BG);
+    }
+
+    #[test]
+    fn a_thread_picked_from_the_focused_side_panel_shows_only_the_block_cursor() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        let mut t = thread("a", 1, 1, &["first"]);
+        (t.start_col, t.end_col) = (2, 4);
+        preview.set_threads(vec![t]);
+        render_beside(&preview, 30, 44, 10);
+        // Keys go to the side panel, not the preview.
+        preview.set_focus(false);
+        preview.set_rail_focused(true);
+        assert!(preview.pick_thread(true));
+        let buf = render_beside(&preview, 30, 44, 10);
+        let gutter = preview.gutter_width();
+        assert!(
+            (0..30).all(|x| buf[(x, 1)].bg != crate::theme::SELECTION_BG),
+            "no cursor-line background under the picked node"
+        );
+        assert!(buf[(gutter + 2, 1)].modifier.contains(Modifier::REVERSED), "block cursor");
     }
 
     #[test]
