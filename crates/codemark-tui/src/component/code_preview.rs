@@ -1081,6 +1081,13 @@ impl CodePreview {
         self.render_scrollbar(area.right().saturating_sub(1), buf);
     }
 
+    /// Whether keys reach the preview's cursor: the preview has focus, or the
+    /// side panel does while threads are beside the code (its keys pick
+    /// threads, moving the preview's cursor).
+    fn has_active_focus(&self) -> bool {
+        self.focused || (self.inline.rail_focused.get() && self.inline.beside.get())
+    }
+
     /// The narrowest thread whose anchored lines contain `line`.
     fn narrowest_thread_at(&self, line: usize) -> Option<usize> {
         self.inline
@@ -1102,7 +1109,7 @@ impl CodePreview {
     /// narrowest thread whose anchored lines contain the cursor line. Only
     /// while the preview has focus.
     fn focused_thread(&self) -> Option<usize> {
-        if !self.focused && !(self.inline.rail_focused.get() && self.inline.beside.get()) {
+        if !self.has_active_focus() {
             return None;
         }
         if let Some(t) = self.cursor_thread() {
@@ -1547,7 +1554,7 @@ impl Component for CodePreview {
             let expanded = !self.inline.folded.contains(&t.root_id);
             *comment_signs.entry(line).or_default() |= expanded;
         }
-        let cursor_thread = self.cursor_thread().filter(|_| self.focused);
+        let cursor_thread = self.cursor_thread().filter(|_| self.has_active_focus());
 
         // Build only the visible rows: the paragraph is rendered pre-scrolled.
         // Clamp to the content: an offset set before the first frame (no
@@ -1681,8 +1688,7 @@ impl Component for CodePreview {
         // Draw the block cursor on the focused row/column. Painted on top of the
         // selection background by reversing the cell under the cursor, so it
         // keeps the underlying character and stays theme-independent.
-        if self.focused
-            && (self.selection_mode || picked_beside)
+        if ((self.focused && self.selection_mode) || picked_beside)
             && let Some(row) = cursor_row
             && row >= offset
         {
@@ -2902,6 +2908,26 @@ mod tests {
         assert!(preview.handle_event(&key(KeyCode::Char('j'))));
         let buf = render_beside(&preview, 30, 44, 10);
         assert_eq!(buf[(0, 2)].bg, crate::theme::SELECTION_BG);
+    }
+
+    #[test]
+    fn a_thread_picked_from_the_focused_side_panel_shows_only_the_block_cursor() {
+        let mut preview = CodePreview::new(numbered_code(10), "txt");
+        let mut t = thread("a", 1, 1, &["first"]);
+        (t.start_col, t.end_col) = (2, 4);
+        preview.set_threads(vec![t]);
+        render_beside(&preview, 30, 44, 10);
+        // Keys go to the side panel, not the preview.
+        preview.set_focus(false);
+        preview.set_rail_focused(true);
+        assert!(preview.pick_thread(true));
+        let buf = render_beside(&preview, 30, 44, 10);
+        let gutter = preview.gutter_width();
+        assert!(
+            (0..30).all(|x| buf[(x, 1)].bg != crate::theme::SELECTION_BG),
+            "no cursor-line background under the picked node"
+        );
+        assert!(buf[(gutter + 2, 1)].modifier.contains(Modifier::REVERSED), "block cursor");
     }
 
     #[test]
