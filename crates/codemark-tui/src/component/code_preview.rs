@@ -1081,6 +1081,17 @@ impl CodePreview {
         self.render_scrollbar(area.right().saturating_sub(1), buf);
     }
 
+    /// The narrowest thread whose anchored lines contain `line`.
+    fn narrowest_thread_at(&self, line: usize) -> Option<usize> {
+        self.inline
+            .threads
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.anchor_start <= line && line <= t.anchor_end)
+            .min_by_key(|(_, t)| t.anchor_end - t.anchor_start)
+            .map(|(i, _)| i)
+    }
+
     /// Index of the thread whose bubble the cursor is on.
     fn cursor_thread(&self) -> Option<usize> {
         let id = self.inline.cursor_on.as_deref()?;
@@ -1097,14 +1108,7 @@ impl CodePreview {
         if let Some(t) = self.cursor_thread() {
             return Some(t);
         }
-        let line = self.selected_line?;
-        self.inline
-            .threads
-            .iter()
-            .enumerate()
-            .filter(|(_, t)| t.anchor_start <= line && line <= t.anchor_end)
-            .min_by_key(|(_, t)| t.anchor_end - t.anchor_start)
-            .map(|(i, _)| i)
+        self.narrowest_thread_at(self.selected_line?)
     }
 
     /// Root id of the thread the cursor is on (see [`Self::focused_thread`]).
@@ -1143,7 +1147,8 @@ impl CodePreview {
 
     /// `z`: on a bubble, fold that thread (the cursor returns to its line);
     /// on a code line with threads under it, fold them all, or unfold them
-    /// all when every one is folded. Returns `false` when there is nothing to
+    /// all when every one is folded. Any other line of a thread's node
+    /// toggles that thread. Returns `false` when there is nothing to
     /// fold, so the key can fall through.
     fn toggle_fold(&mut self) -> bool {
         // Beside the code, fold the picked thread's bubble in the side panel
@@ -1171,11 +1176,14 @@ impl CodePreview {
             return true;
         }
         let Some(line) = self.selected_line else { return false };
-        let ids: Vec<String> = self
-            .threads_under(line)
-            .into_iter()
-            .map(|i| self.inline.threads[i].root_id.clone())
-            .collect();
+        // The threads whose bubbles hang under this line, else (on an upper
+        // line of a multi-line node) the narrowest thread anchored over it.
+        let mut under = self.threads_under(line);
+        if under.is_empty() {
+            under.extend(self.narrowest_thread_at(line));
+        }
+        let ids: Vec<String> =
+            under.into_iter().map(|i| self.inline.threads[i].root_id.clone()).collect();
         if ids.is_empty() {
             return false;
         }
@@ -2468,6 +2476,32 @@ mod tests {
         assert_eq!(preview.total_rows(), 6);
         assert!(preview.handle_event(&z));
         assert!(preview.inline.folded.is_empty());
+    }
+
+    #[test]
+    fn z_toggles_a_multi_line_thread_from_any_of_its_lines() {
+        let mut preview = CodePreview::new(numbered_code(8), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 30);
+        // An outer thread over lines 1-5 and a narrower one over 2-4.
+        preview.set_threads(vec![thread("outer", 1, 5, &["o"]), thread("inner", 2, 4, &["i"])]);
+        let z = key(ratatui::crossterm::event::KeyCode::Char('z'));
+
+        // The node's first line folds the thread, and unfolds it again.
+        preview.jump_to_line(1);
+        assert!(preview.handle_event(&z));
+        assert_eq!(preview.inline.folded.iter().collect::<Vec<_>>(), vec!["outer"]);
+        assert!(preview.handle_event(&z));
+        assert!(preview.inline.folded.is_empty());
+
+        // A middle line toggles the narrowest thread over it.
+        preview.jump_to_line(3);
+        assert!(preview.handle_event(&z));
+        assert_eq!(preview.inline.folded.iter().collect::<Vec<_>>(), vec!["inner"]);
+
+        // Outside every node, `z` has nothing to do.
+        preview.jump_to_line(7);
+        assert!(!preview.handle_event(&z));
     }
 
     #[test]
