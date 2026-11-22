@@ -504,8 +504,38 @@ fn render_theme(area: Rect, buf: &mut Buffer, themes: &[String], selected: usize
     ratatui::widgets::StatefulWidget::render(list, area, buf, &mut state);
 }
 
+/// Hard-wrap `s` into chunks no wider than `width` display columns.
+///
+/// Paths have few spaces, so word wrapping would leave long ones unbroken;
+/// splitting on character boundaries keeps every chunk within the column.
+fn wrap_to_width(s: &str, width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthChar;
+
+    let width = width.max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    for ch in s.chars() {
+        let w = ch.width().unwrap_or(0);
+        if current_width + w > width && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += w;
+    }
+    if !current.is_empty() || chunks.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
 /// Render the Configuration tab: a `label : value` list of important paths and
 /// settings, with labels aligned to the widest one.
+///
+/// Rendered as a [`List`] so it scrolls to keep the selected row visible on
+/// short terminals. Long values wrap onto continuation lines indented under the
+/// value column, so a row's height is known to the list for scrolling.
 fn render_configuration(
     area: Rect,
     buf: &mut Buffer,
@@ -514,8 +544,11 @@ fn render_configuration(
 ) {
     let palette = crate::theme::palette();
     let label_width = rows.iter().map(|(label, _, _)| label.len()).max().unwrap_or(0);
+    // marker (2) + label + two-space gap
+    let value_indent = 2 + label_width + 2;
+    let value_width = (area.width as usize).saturating_sub(value_indent);
 
-    let mut text = Text::default();
+    let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
     for (i, (label, value, has_path)) in rows.iter().enumerate() {
         let is_selected = i == selected_row;
         let is_link = has_path.is_some();
@@ -541,13 +574,22 @@ fn render_configuration(
             Style::default().fg(palette.emphasis)
         };
 
-        text.push_line(Line::from(vec![
+        let mut chunks = wrap_to_width(value, value_width).into_iter();
+        let first = chunks.next().unwrap_or_default();
+        let mut lines = vec![Line::from(vec![
             marker,
             Span::styled(format!("{label:<label_width$}  "), label_style),
-            Span::styled(value.clone(), value_style),
-        ]));
+            Span::styled(first, value_style),
+        ])];
+        lines.extend(chunks.map(|chunk| {
+            Line::from(vec![Span::raw(" ".repeat(value_indent)), Span::styled(chunk, value_style)])
+        }));
+        items.push(ListItem::new(lines));
     }
-    Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
+
+    let mut state = ListState::default();
+    state.select(Some(selected_row));
+    ratatui::widgets::StatefulWidget::render(List::new(items), area, buf, &mut state);
 }
 
 /// Render the About tab: version and project links.
@@ -787,5 +829,26 @@ mod tests {
         // An unrelated key is still consumed while the overlay is open.
         assert_eq!(overlay.handle_key(KeyCode::Char('q'), &[]), SettingsAction::Handled);
         assert!(overlay.is_visible());
+    }
+
+    #[test]
+    fn wrap_to_width_splits_long_values() {
+        assert_eq!(wrap_to_width("abcdef", 4), vec!["abcd", "ef"]);
+        assert_eq!(wrap_to_width("abc", 10), vec!["abc"]);
+        assert_eq!(wrap_to_width("", 5), vec![""]);
+    }
+
+    #[test]
+    fn configuration_scrolls_to_keep_selected_row_visible() {
+        let rows: Vec<(&'static str, String, Option<String>)> =
+            (0..20).map(|i| ("Row", format!("value-{i}"), None)).collect();
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        render_configuration(area, &mut buf, &rows, 19);
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("value-19"), "selected row scrolled out of view:\n{rendered}");
     }
 }

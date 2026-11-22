@@ -46,7 +46,12 @@ fn executable_row() -> (String, Option<String>) {
             return ("<unavailable>".to_string(), None);
         }
     };
-    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    // An unresolved path still names the install, so fall back to it rather
+    // than hiding the row when symlink resolution fails.
+    let exe = std::fs::canonicalize(&exe).unwrap_or_else(|e| {
+        tracing::debug!(target: "codemark::ui", error = %e, path = %exe.display(), "could not canonicalize executable path");
+        exe
+    });
     let dir = exe.parent().map(|d| d.to_string_lossy().to_string());
     (abbreviate(&exe), dir)
 }
