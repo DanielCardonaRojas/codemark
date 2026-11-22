@@ -30,6 +30,27 @@ fn abbreviate(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// The running binary's install location, for the Configuration tab.
+///
+/// Codemark ships through several installers (Homebrew, mise, cargo, the
+/// install scripts), each landing the binary somewhere different, so showing
+/// where *this* process lives tells the user which install they're running.
+/// Symlinks (Homebrew's `bin/` link, shims) are resolved so the row names the
+/// real install directory. The open target is the containing directory rather
+/// than the binary itself, since "opening" an executable would launch it.
+fn executable_row() -> (String, Option<String>) {
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            tracing::warn!(target: "codemark::ui", error = %e, "could not resolve current executable");
+            return ("<unavailable>".to_string(), None);
+        }
+    };
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    let dir = exe.parent().map(|d| d.to_string_lossy().to_string());
+    (abbreviate(&exe), dir)
+}
+
 impl BrowserLayout {
     /// Re-apply the active syntax theme to the right-pane code previews.
     ///
@@ -68,8 +89,11 @@ impl BrowserLayout {
         let templates_dir = path_tuple(templates::templates_dir());
         let grammars_dir = path_tuple(config::global_grammars_dir());
 
+        let (executable, executable_dir) = executable_row();
+
         let mut rows = vec![
             ("Version", crate::VERSION.to_string(), None),
+            ("Executable", executable, executable_dir),
             ("Database", abbreviate(db_path), Some(db_path.to_string_lossy().to_string())),
             ("Registry", registry_tuple.0, registry_tuple.1),
             ("Global config", global_config.0, global_config.1),
