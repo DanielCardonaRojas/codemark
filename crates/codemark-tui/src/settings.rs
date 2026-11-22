@@ -530,6 +530,13 @@ fn wrap_to_width(s: &str, width: usize) -> Vec<String> {
     chunks
 }
 
+/// Narrowest value column the side-by-side Configuration layout accepts before
+/// falling back to the compact (value-under-label) layout.
+const MIN_VALUE_WIDTH: usize = 16;
+
+/// Indent of value lines in the compact Configuration layout.
+const COMPACT_VALUE_INDENT: usize = 4;
+
 /// Render the Configuration tab: a `label : value` list of important paths and
 /// settings, with labels aligned to the widest one.
 ///
@@ -544,8 +551,12 @@ fn render_configuration(
 ) {
     let palette = crate::theme::palette();
     let label_width = rows.iter().map(|(label, _, _)| label.len()).max().unwrap_or(0);
-    // marker (2) + label + two-space gap
-    let value_indent = 2 + label_width + 2;
+    // Side-by-side: marker (2) + label + two-space gap, then the value. When
+    // that leaves too little room for the value (narrow terminals), switch to a
+    // compact layout with the value on its own lines under the label.
+    let side_by_side_indent = 2 + label_width + 2;
+    let compact = (area.width as usize).saturating_sub(side_by_side_indent) < MIN_VALUE_WIDTH;
+    let value_indent = if compact { COMPACT_VALUE_INDENT } else { side_by_side_indent };
     let value_width = (area.width as usize).saturating_sub(value_indent);
 
     let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
@@ -575,12 +586,16 @@ fn render_configuration(
         };
 
         let mut chunks = wrap_to_width(value, value_width).into_iter();
-        let first = chunks.next().unwrap_or_default();
-        let mut lines = vec![Line::from(vec![
-            marker,
-            Span::styled(format!("{label:<label_width$}  "), label_style),
-            Span::styled(first, value_style),
-        ])];
+        let mut lines = if compact {
+            vec![Line::from(vec![marker, Span::styled(label.to_string(), label_style)])]
+        } else {
+            let first = chunks.next().unwrap_or_default();
+            vec![Line::from(vec![
+                marker,
+                Span::styled(format!("{label:<label_width$}  "), label_style),
+                Span::styled(first, value_style),
+            ])]
+        };
         lines.extend(chunks.map(|chunk| {
             Line::from(vec![Span::raw(" ".repeat(value_indent)), Span::styled(chunk, value_style)])
         }));
@@ -850,5 +865,22 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(rendered.contains("value-19"), "selected row scrolled out of view:\n{rendered}");
+    }
+
+    #[test]
+    fn narrow_configuration_puts_values_under_labels() {
+        let rows: Vec<(&'static str, String, Option<String>)> = vec![
+            ("Content tab order", "Bookmarks".to_string(), None),
+            ("Executable", "/opt/codemark/bin/codemark".to_string(), None),
+        ];
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buf = Buffer::empty(area);
+        render_configuration(area, &mut buf, &rows, 0);
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Bookmarks"), "value hidden on a narrow terminal:\n{rendered}");
+        assert!(rendered.contains("/opt/codemark/bi"), "value hidden:\n{rendered}");
     }
 }
