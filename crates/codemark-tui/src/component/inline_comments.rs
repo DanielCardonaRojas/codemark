@@ -239,8 +239,22 @@ pub(crate) fn stack_rail(desired: &[usize], heights: &[usize]) -> Vec<usize> {
 
 /// The rows of a comment `body`: its markdown rendered, then wrapped to
 /// `width` display columns.
+///
+/// A bubble can't open links, so each link's destination follows its text
+/// (`docs (https://…)`) unless the text already is the destination.
 fn body_rows(body: &str, width: usize) -> impl Iterator<Item = Line<'static>> {
-    let (lines, _links) = parse_markdown(body);
+    let (mut lines, links) = parse_markdown(body);
+    // Last link first, so inserting a span leaves earlier ranges valid.
+    for link in links.iter().rev() {
+        let Some(line) = lines.get_mut(link.line_idx) else { continue };
+        let Some(text_spans) = line.spans.get(link.span_range.clone()) else { continue };
+        let text: String = text_spans.iter().map(|s| s.content.as_ref()).collect();
+        if text == link.url || link.url.is_empty() {
+            continue;
+        }
+        let dim = Style::default().fg(crate::theme::palette().dim);
+        line.spans.insert(link.span_range.end, Span::styled(format!(" ({})", link.url), dim));
+    }
     lines.into_iter().flat_map(move |line| wrap_line(&line, width))
 }
 
@@ -297,7 +311,10 @@ pub(crate) fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>
         hang.push(Span::raw(" ".repeat(indent)));
     }
     let prefix_width = first.iter().map(Span::width).sum::<usize>();
-    if prefix_width >= width {
+    // The widest character must fit beside the prefix, or its row would
+    // overflow the box.
+    let widest = cells[indent..].iter().map(|(c, _)| c.width().unwrap_or(0)).max().unwrap_or(0);
+    if prefix_width + widest.max(1) > width {
         // No room beside the prefix: wrap it along with the text.
         cells =
             line.spans.iter().flat_map(|s| s.content.chars().map(move |c| (c, s.style))).collect();
@@ -789,6 +806,29 @@ mod tests {
             body_text(&[comment("```\n    let value = compute();\n```")], 16),
             vec!["    let value =", "    compute();"]
         );
+    }
+
+    #[test]
+    fn links_show_their_destination() {
+        assert_eq!(
+            body_text(&[comment("see [docs](https://x.dev) and <https://y.dev>")], 60),
+            vec!["see docs (https://x.dev) and https://y.dev"]
+        );
+    }
+
+    #[test]
+    fn wide_characters_that_cannot_fit_beside_a_prefix_drop_the_hang() {
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let entries = [comment("> 界界")];
+        for line in bubble_lines(&entries, None, 3) {
+            let row = row_text(&render_bubble_line(&line, 4, 12, false, &style));
+            assert_eq!(row.width(), 12, "{row:?}");
+        }
     }
 
     #[test]

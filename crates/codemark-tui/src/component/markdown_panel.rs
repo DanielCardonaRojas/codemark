@@ -12,6 +12,7 @@ use ratatui::{
         Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
     },
 };
+use unicode_width::UnicodeWidthStr;
 
 /// The location and target of a rendered link, used to highlight the focused
 /// link and open it. `line_idx` indexes [`MarkdownPanel::cached_text`]'s lines;
@@ -20,11 +21,11 @@ use ratatui::{
 #[derive(Debug, Clone)]
 pub(crate) struct LinkSpan {
     /// Destination URL to open.
-    url: String,
+    pub(crate) url: String,
     /// Index of the line (in the parsed `Text`) the link sits on.
-    line_idx: usize,
+    pub(crate) line_idx: usize,
     /// Half-open `[start, end)` range of span indices forming the link text.
-    span_range: std::ops::Range<usize>,
+    pub(crate) span_range: std::ops::Range<usize>,
 }
 
 /// Open a URL in the system default browser. The default `open_link` action;
@@ -302,6 +303,12 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
     let mut blockquote_depth: usize = 0;
     // One entry per open list: the next item's number, `None` for bullets.
     let mut lists: Vec<Option<u64>> = Vec::new();
+    // One entry per open list item: the column its text starts at, where
+    // the item's later lines (soft breaks, code lines) line up.
+    let mut item_hang: Vec<usize> = Vec::new();
+    // Whether the current line continues an open item and still needs that
+    // item's indent before its first text.
+    let mut continuation = false;
     let mut in_table = false;
     let mut cell_index: usize = 0;
     // The first ("key") table column is padded to a fixed width. Inline
@@ -327,6 +334,19 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
             lines.push(Line::from(std::mem::take(&mut current_spans)));
             if blockquote_depth > 0 {
                 current_spans.push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
+            }
+            continuation = !item_hang.is_empty();
+        }};
+    }
+
+    // Indent a line that continues a list item, before its first text.
+    macro_rules! begin_text {
+        () => {{
+            if continuation {
+                continuation = false;
+                if let Some(&hang) = item_hang.last() {
+                    current_spans.push(Span::raw(" ".repeat(hang)));
+                }
             }
         }};
     }
@@ -358,6 +378,7 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                     flush_line!();
                 }
                 if !piece.is_empty() {
+                    begin_text!();
                     current_spans.push(Span::styled(piece.to_string(), style));
                 }
             }
@@ -420,6 +441,8 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                     lists.push(start);
                 }
                 Tag::Item => {
+                    // The item draws its own indent and marker.
+                    continuation = false;
                     let depth = lists.len().saturating_sub(1);
                     if depth > 0 {
                         current_spans.push(Span::raw(" ".repeat(depth * LIST_INDENT)));
@@ -431,6 +454,7 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                         }
                         _ => "• ".to_string(),
                     };
+                    item_hang.push(depth * LIST_INDENT + marker.width());
                     current_spans.push(Span::styled(marker, Style::default().fg(palette.accent)));
                 }
                 Tag::Strong => {
@@ -462,6 +486,10 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                     cell_index = 0;
                 }
                 Tag::TableCell => {
+                    // Columns after the key are separated by a bar.
+                    if cell_index > 1 {
+                        current_spans.push(Span::styled(" │ ", Style::default().fg(palette.dim)));
+                    }
                     // First column ("key") renders dim, like the prior layout.
                     let style = if cell_index == 0 {
                         Style::default().fg(palette.dim)
@@ -518,8 +546,13 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                 TagEnd::Item => {
                     // An item whose last line a nested list or paragraph
                     // already emitted leaves nothing to flush.
+                    // Pop first, so the next line continues the enclosing
+                    // item, if any.
+                    item_hang.pop();
                     if has_content!() {
                         flush_line!();
+                    } else {
+                        continuation = !item_hang.is_empty();
                     }
                 }
                 TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
@@ -559,7 +592,7 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                         // Pad the fully-accumulated key once, so inline
                         // formatting in the cell can't inflate the width.
                         let style = top_style(&style_stack);
-                        current_spans.push(Span::styled(format!("{:<15}", key_buf), style));
+                        current_spans.push(Span::styled(format!("{:<14} ", key_buf), style));
                         key_buf.clear();
                     }
                     style_stack.pop();
@@ -586,6 +619,7 @@ pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan
                     // Inline code in a key cell still counts toward its width.
                     key_buf.push_str(text.as_ref());
                 } else {
+                    begin_text!();
                     // Code stays upright even inside emphasis or a quote.
                     let style = top_style(&style_stack)
                         .fg(palette.warning)
@@ -866,6 +900,28 @@ mod tests {
         assert_eq!(
             rendered_lines("- outer\n  - inner\n  - inner two\n- next"),
             vec!["• outer", "  • inner", "  • inner two", "• next"]
+        );
+    }
+
+    #[test]
+    fn list_items_keep_their_indent_across_line_breaks() {
+        assert_eq!(
+            rendered_lines("- outer\n  - first\n    second\n- next\n  more"),
+            vec!["• outer", "  • first", "    second", "• next", "  more"]
+        );
+        assert_eq!(
+            rendered_lines("1. code:\n\n   ```\n   a\n   b\n   ```\n\nafter"),
+            vec!["1. code:", "", "   a", "   b", "", "after"]
+        );
+    }
+
+    #[test]
+    fn table_cells_after_the_key_are_separated() {
+        assert_eq!(
+            rendered_lines(
+                "| check | state | next |\n|---|---|---|\n| a_very_long_key | failed | retry |"
+            ),
+            vec!["check          state │ next", "a_very_long_key failed │ retry"]
         );
     }
 
