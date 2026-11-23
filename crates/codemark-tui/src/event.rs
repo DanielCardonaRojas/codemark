@@ -418,7 +418,7 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
                 // input events are arriving (e.g. mouse events from mouse capture
                 // can starve tick generation otherwise).
                 if last_tick.elapsed() >= tick_rate {
-                    if tx.send(Event::Tick).await.is_err() {
+                    if !send_tick(&tx) {
                         return;
                     }
                     last_tick = std::time::Instant::now();
@@ -427,7 +427,7 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
             Ok(None) => {
                 // Timeout occurred, send tick event if needed
                 if last_tick.elapsed() >= tick_rate {
-                    if tx.send(Event::Tick).await.is_err() {
+                    if !send_tick(&tx) {
                         // Channel closed, exit the loop
                         return;
                     }
@@ -436,12 +436,31 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
             }
             Err(_) => {
                 // Spawn blocking task failed or was cancelled
-                if tx.send(Event::Tick).await.is_err() {
+                if !send_tick(&tx) {
                     return;
                 }
                 last_tick = std::time::Instant::now();
             }
         }
+    }
+}
+
+/// Queue a tick without waiting for room. Returns `false` once the channel is
+/// closed.
+///
+/// A tick carries no data, so when the UI loop is stalled (e.g. blocked writing
+/// to a terminal that stopped reading) and the channel is full, the tick is
+/// dropped. Waiting instead would leave this loop parked on a channel of stale
+/// ticks, no longer reading the terminal, so the user's keys (Ctrl+C included)
+/// would pile up unread behind them.
+fn send_tick(tx: &mpsc::Sender<Event>) -> bool {
+    match tx.try_send(Event::Tick) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::trace!(target: "codemark::ui", "event channel full; dropping tick");
+            true
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => false,
     }
 }
 

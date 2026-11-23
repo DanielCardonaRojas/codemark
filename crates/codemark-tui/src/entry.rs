@@ -169,7 +169,9 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
     // browser can re-check login state (Tours-tab visibility) when the user
     // returns after an external `codemark auth login`/`logout`.
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableFocusChange)?;
-    let backend = CrosstermBackend::new(stdout);
+    // Wrapped so an unchanged frame writes nothing: see `quiet_backend` for why
+    // an idle TUI must stay silent.
+    let backend = crate::quiet_backend::QuietBackend::new(CrosstermBackend::new(stdout));
     let mut terminal = Terminal::new(backend)?;
 
     // Create app state
@@ -304,6 +306,22 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
             while let Ok(ev) = event_rx.try_recv() {
                 events.push(ev);
             }
+
+            // Ctrl+C anywhere in the batch wins over everything queued ahead of
+            // it. Otherwise a backlog (say, several focus changes from flipping
+            // tabs, each reloading the panels) would run first and the escape
+            // hatch would feel dead.
+            if events.iter().any(is_ctrl_c) {
+                tracing::debug!(target: "codemark::ui", "Ctrl+C received, quitting");
+                state.quit();
+                break;
+            }
+
+            // Repeated focus changes in one batch (several tab switches while
+            // the UI was busy) collapse to a single reload: each `FocusGained`
+            // re-scans grammars and rebuilds every panel, and the result of
+            // the last one supersedes the others.
+            coalesce_focus_events(&mut events);
 
             for event in events {
                 let mut handled = false;
@@ -801,4 +819,83 @@ fn run_settings_action(
 fn restore_terminal() {
     let _ = disable_raw_mode();
     let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, DisableFocusChange);
+}
+
+/// Whether `event` is the Ctrl+C key press (the universal quit).
+fn is_ctrl_c(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key(key)
+            if key.code == event::KeyCode::Char('c')
+                && key.modifiers.contains(event::KeyModifiers::CONTROL)
+    )
+}
+
+/// Keep only the last focus change in `events`, dropping earlier ones.
+///
+/// Flipping tabs while the UI is busy queues a `FocusLost`/`FocusGained` pair
+/// per switch. Only the final state matters: a trailing `FocusGained` reloads
+/// once, and a trailing `FocusLost` means the user is away again, so the reload
+/// waits for the next return.
+fn coalesce_focus_events(events: &mut Vec<Event>) {
+    let is_focus = |e: &Event| matches!(e, Event::FocusGained | Event::FocusLost);
+    let Some(last) = events.iter().rposition(is_focus) else { return };
+    let mut index = 0;
+    events.retain(|e| {
+        let keep = !is_focus(e) || index == last;
+        index += 1;
+        keep
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(KeyEvent::new(code, modifiers))
+    }
+
+    fn names(events: &[Event]) -> Vec<&'static str> {
+        events
+            .iter()
+            .map(|e| match e {
+                Event::FocusGained => "gained",
+                Event::FocusLost => "lost",
+                Event::Tick => "tick",
+                Event::Key(_) => "key",
+                _ => "other",
+            })
+            .collect()
+    }
+
+    #[test]
+    fn repeated_tab_switches_collapse_to_the_final_focus_state() {
+        let mut events = vec![
+            Event::FocusLost,
+            Event::FocusGained,
+            Event::Tick,
+            Event::FocusLost,
+            key(KeyCode::Char('j'), KeyModifiers::NONE),
+            Event::FocusGained,
+        ];
+        coalesce_focus_events(&mut events);
+        assert_eq!(names(&events), ["tick", "key", "gained"]);
+
+        let mut away = vec![Event::FocusGained, Event::Tick, Event::FocusLost];
+        coalesce_focus_events(&mut away);
+        assert_eq!(names(&away), ["tick", "lost"]);
+
+        let mut none = vec![Event::Tick];
+        coalesce_focus_events(&mut none);
+        assert_eq!(names(&none), ["tick"]);
+    }
+
+    #[test]
+    fn ctrl_c_is_recognised_but_plain_c_is_not() {
+        assert!(is_ctrl_c(&key(KeyCode::Char('c'), KeyModifiers::CONTROL)));
+        assert!(!is_ctrl_c(&key(KeyCode::Char('c'), KeyModifiers::NONE)));
+        assert!(!is_ctrl_c(&Event::FocusGained));
+    }
 }

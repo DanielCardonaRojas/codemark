@@ -834,11 +834,19 @@ impl BrowserLayout {
     /// Shared by `FocusGained` (a grammar installed from the CLI meanwhile)
     /// and [`reload_grammars`](Self::reload_grammars) (one installed from the
     /// Languages tab).
-    pub(crate) fn forget_grammar_state(&mut self) {
+    ///
+    /// Unless `force` is set, the caches are kept when the re-scan finds the
+    /// same grammars. Dropping them means recompiling every WASM grammar's
+    /// parser on the UI thread, and `FocusGained` fires on every tab switch.
+    pub(crate) fn forget_grammar_state(&mut self, force: bool) {
         // Re-scan the
         // grammar cache so live resolution picks up new languages instead
         // of retaining the startup snapshot until the process restarts.
-        codemark_core::parser::registry::LanguageRegistry::refresh();
+        let changed = codemark_core::parser::registry::LanguageRegistry::refresh();
+        if !changed && !force {
+            tracing::debug!(target: "codemark::ui", "grammars unchanged; keeping parse caches");
+            return;
+        }
         // The parse caches key their `Parser`/`Profile` by language name,
         // so after a refresh an *updated* grammar would still be served
         // from the old cached parser. Drop both the synchronous session
@@ -865,7 +873,7 @@ impl BrowserLayout {
     /// then rebuild the panels so bookmarks that showed "No grammar" resolve.
     pub fn reload_grammars(&mut self) {
         tracing::debug!(target: "codemark::ui", "reloading grammars after an in-app install");
-        self.forget_grammar_state();
+        self.forget_grammar_state(true);
         self.refresh_all_panels_preserving_search();
         self.reconcile_preserved_search_rows();
     }

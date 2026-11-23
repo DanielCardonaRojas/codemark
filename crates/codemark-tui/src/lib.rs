@@ -35,6 +35,7 @@ pub mod event;
 pub mod languages_tab;
 pub mod layout;
 pub mod logging;
+pub mod quiet_backend;
 pub mod settings;
 pub mod startup;
 pub mod state;
