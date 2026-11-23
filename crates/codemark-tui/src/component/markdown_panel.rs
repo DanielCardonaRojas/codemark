@@ -12,19 +12,20 @@ use ratatui::{
         Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
     },
 };
+use unicode_width::UnicodeWidthStr;
 
 /// The location and target of a rendered link, used to highlight the focused
 /// link and open it. `line_idx` indexes [`MarkdownPanel::cached_text`]'s lines;
 /// `span_range` is the half-open range of spans on that line that make up the
 /// link's visible text.
 #[derive(Debug, Clone)]
-struct LinkSpan {
+pub(crate) struct LinkSpan {
     /// Destination URL to open.
-    url: String,
+    pub(crate) url: String,
     /// Index of the line (in the parsed `Text`) the link sits on.
-    line_idx: usize,
+    pub(crate) line_idx: usize,
     /// Half-open `[start, end)` range of span indices forming the link text.
-    span_range: std::ops::Range<usize>,
+    pub(crate) span_range: std::ops::Range<usize>,
 }
 
 /// Open a URL in the system default browser. The default `open_link` action;
@@ -126,282 +127,10 @@ impl MarkdownPanel {
         old_offset != self.scroll_offset
     }
 
-    /// Convert the markdown string into Ratatui `Text` by walking the
-    /// `pulldown-cmark` event stream.
-    ///
-    /// `pulldown-cmark` handles CommonMark parsing (including backslash escapes
-    /// like `\_` and `\*`, which the templates emit via `escape_markdown`) so
-    /// we no longer scan for inline markers by hand. We translate the linear
-    /// event stream into styled [`Line`]s, maintaining a [`Style`] stack so
-    /// nested inline formatting (`**bold**`, `_italic_`, `` `code` ``) composes
-    /// correctly, plus a little context to inject blockquote/list prefixes and
-    /// emulate the prior table layout.
+    /// Convert the content into Ratatui `Text`; see [`parse_markdown`].
     fn parse_to_text(&self) -> (Text<'static>, Vec<LinkSpan>) {
-        /// Visual prefix prepended to every line inside a blockquote.
-        const QUOTE_PREFIX: &str = "┃ ";
-
-        let palette = crate::theme::palette();
-
-        let mut lines: Vec<Line<'static>> = Vec::new();
-        let mut current_spans: Vec<Span<'static>> = Vec::new();
-        // Text inherits the style at the top of this stack.
-        let mut style_stack: Vec<Style> = vec![Style::default()];
-
-        // Links discovered so far, plus the in-progress link (if any). When a
-        // `Tag::Link` opens we record its URL, the span index where its text
-        // begins, and the line it begins on (`lines.len()`); when it closes we
-        // capture the span range. Link text is single-line in practice, but a
-        // soft break inside it would flush the line and invalidate the start span
-        // index — the recorded start line lets us detect that and recover (see
-        // `TagEnd::Link`) instead of silently dropping the link.
-        let mut links: Vec<LinkSpan> = Vec::new();
-        let mut pending_link: Option<(String, usize, usize)> = None;
-
-        // Context flags/counters for prefixes and the table layout hack.
-        let mut blockquote_depth: usize = 0;
-        let mut in_table = false;
-        let mut cell_index: usize = 0;
-        // The first ("key") table column is padded to a fixed width. Inline
-        // formatting splits a cell into several text/code events, so accumulate
-        // the cell's visible text here and pad it exactly once on cell close —
-        // padding each fragment would inflate the column far past the target.
-        let mut key_buf = String::new();
-
-        // Push `current_spans` as a finished line (even when empty, so blank
-        // lines and paragraph spacing survive), then start a fresh line. When
-        // inside a blockquote, seed the new line with the `┃ ` prefix.
-        macro_rules! flush_line {
-            () => {{
-                lines.push(Line::from(std::mem::take(&mut current_spans)));
-                if blockquote_depth > 0 {
-                    current_spans
-                        .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
-                }
-            }};
-        }
-
-        // Ensure a blank separator line precedes the next top-level block.
-        // `pulldown-cmark` collapses the blank lines between blocks into block
-        // structure, so we re-synthesize one space between adjacent blocks
-        // (table → heading, paragraph → heading, etc.) — but never at the very
-        // top and never two in a row. Nested blocks (list items, blockquote
-        // bodies) opt out so their lines stay tight.
-        macro_rules! ensure_blank {
-            () => {{
-                let has_pending = !current_spans.iter().all(|s| s.content.is_empty());
-                let last_blank =
-                    lines.last().is_none_or(|l| l.spans.iter().all(|s| s.content.is_empty()));
-                if !has_pending && !lines.is_empty() && !last_blank {
-                    lines.push(Line::from(""));
-                }
-            }};
-        }
-
-        let parser = Parser::new_ext(&self.content, Options::ENABLE_TABLES);
-
-        for event in parser {
-            match event {
-                MdEvent::Start(tag) => match tag {
-                    Tag::Heading { level, .. } => {
-                        // Headings always stand apart from the preceding block.
-                        ensure_blank!();
-                        let style = match level {
-                            HeadingLevel::H1 => Style::default()
-                                .fg(palette.warning)
-                                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                            _ => Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
-                        };
-                        style_stack.push(style);
-                    }
-                    Tag::Paragraph => {
-                        ensure_blank!();
-                    }
-                    Tag::BlockQuote(_) => {
-                        ensure_blank!();
-                        blockquote_depth += 1;
-                        // Blockquote body renders gray + italic, prefixed `┃ `.
-                        style_stack
-                            .push(Style::default().fg(palette.gray).add_modifier(Modifier::ITALIC));
-                        current_spans
-                            .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
-                    }
-                    Tag::Table(_) => {
-                        ensure_blank!();
-                        in_table = true;
-                    }
-                    Tag::List(_) => {
-                        // Separate the list from the preceding block, but keep
-                        // items themselves tight (no blank between them).
-                        ensure_blank!();
-                    }
-                    Tag::Item => {
-                        current_spans.push(Span::styled("• ", Style::default().fg(palette.accent)));
-                    }
-                    Tag::Strong => {
-                        let style = self.top_style(&style_stack).add_modifier(Modifier::BOLD);
-                        style_stack.push(style);
-                    }
-                    Tag::Emphasis => {
-                        let style = self.top_style(&style_stack).add_modifier(Modifier::ITALIC);
-                        style_stack.push(style);
-                    }
-                    Tag::Link { dest_url, .. } => {
-                        // Link text renders underlined in the informational color
-                        // so it reads as a link; the spans it wraps inherit this
-                        // via `top_style`. Remember where the text begins so the
-                        // close can record the span range for highlighting/opening.
-                        let style =
-                            Style::default().fg(palette.info).add_modifier(Modifier::UNDERLINED);
-                        style_stack.push(style);
-                        pending_link =
-                            Some((dest_url.into_string(), current_spans.len(), lines.len()));
-                    }
-                    Tag::TableHead => {
-                        cell_index = 0;
-                    }
-                    Tag::TableRow => {
-                        cell_index = 0;
-                    }
-                    Tag::TableCell => {
-                        // First column ("key") renders dim, like the prior layout.
-                        let style = if cell_index == 0 {
-                            Style::default().fg(palette.dim)
-                        } else {
-                            self.top_style(&style_stack)
-                        };
-                        style_stack.push(style);
-                    }
-                    _ => {}
-                },
-                MdEvent::End(tag) => match tag {
-                    TagEnd::Heading(_) => {
-                        style_stack.pop();
-                        flush_line!();
-                        // H1 keeps a trailing blank line so the title stands out
-                        // even when content follows immediately.
-                        if matches!(tag, TagEnd::Heading(HeadingLevel::H1)) {
-                            flush_line!();
-                        }
-                    }
-                    TagEnd::Paragraph => {
-                        flush_line!();
-                    }
-                    TagEnd::BlockQuote(_) => {
-                        style_stack.pop();
-                        blockquote_depth = blockquote_depth.saturating_sub(1);
-                        // The inner paragraph's flush already emitted the quote's
-                        // last line and speculatively re-seeded `current_spans`
-                        // with a "┃ " prefix. If only that prefix (or nothing) is
-                        // pending, drop it so the closed quote leaves no stray bar
-                        // line; otherwise flush any genuine trailing content.
-                        let only_prefix = current_spans
-                            .iter()
-                            .all(|s| s.content.is_empty() || s.content.as_ref() == QUOTE_PREFIX);
-                        if only_prefix {
-                            current_spans.clear();
-                        } else {
-                            flush_line!();
-                        }
-                    }
-                    TagEnd::Item => {
-                        flush_line!();
-                    }
-                    TagEnd::Strong | TagEnd::Emphasis => {
-                        style_stack.pop();
-                    }
-                    TagEnd::Link => {
-                        style_stack.pop();
-                        // Record the link's text span range on the line it will
-                        // occupy once flushed. If a soft break flushed the line
-                        // mid-link (`start_line != lines.len()`), the recorded
-                        // `start` indexes a now-emitted line, so anchor to the
-                        // final line's spans (`start = 0`) rather than dropping the
-                        // link. If the link emitted no spans (empty text), skip it.
-                        if let Some((url, start, start_line)) = pending_link.take() {
-                            let start = if start_line == lines.len() { start } else { 0 };
-                            let end = current_spans.len();
-                            if end > start {
-                                links.push(LinkSpan {
-                                    url,
-                                    line_idx: lines.len(),
-                                    span_range: start..end,
-                                });
-                            }
-                        }
-                    }
-                    TagEnd::Table => {
-                        in_table = false;
-                    }
-                    TagEnd::TableHead => {
-                        flush_line!();
-                    }
-                    TagEnd::TableRow => {
-                        flush_line!();
-                    }
-                    TagEnd::TableCell => {
-                        if cell_index == 0 {
-                            // Pad the fully-accumulated key once, so inline
-                            // formatting in the cell can't inflate the width.
-                            let style = self.top_style(&style_stack);
-                            current_spans.push(Span::styled(format!("{:<15}", key_buf), style));
-                            key_buf.clear();
-                        }
-                        style_stack.pop();
-                        cell_index += 1;
-                    }
-                    _ => {}
-                },
-                MdEvent::Text(text) => {
-                    if in_table && cell_index == 0 {
-                        // Buffer the key column; padded once at TagEnd::TableCell.
-                        key_buf.push_str(text.as_ref());
-                    } else {
-                        let style = self.top_style(&style_stack);
-                        current_spans.push(Span::styled(text.into_string(), style));
-                    }
-                }
-                MdEvent::Code(text) => {
-                    if in_table && cell_index == 0 {
-                        // Inline code in a key cell still counts toward its width.
-                        key_buf.push_str(text.as_ref());
-                    } else {
-                        let style = self.top_style(&style_stack).fg(palette.warning);
-                        current_spans.push(Span::styled(text.into_string(), style));
-                    }
-                }
-                MdEvent::SoftBreak | MdEvent::HardBreak => {
-                    flush_line!();
-                }
-                MdEvent::Rule => {
-                    flush_line!();
-                    lines.push(Line::from(Span::styled(
-                        "─".repeat(20),
-                        Style::default().fg(palette.dim),
-                    )));
-                }
-                _ => {}
-            }
-        }
-
-        // Emit any trailing spans that weren't terminated by a block end.
-        if !current_spans.is_empty() {
-            lines.push(Line::from(std::mem::take(&mut current_spans)));
-        }
-
-        // Drop trailing blank lines so block terminators (paragraphs, the H1
-        // spacer) don't leave dangling empty rows at the end of the panel.
-        // Links always live on non-blank lines, so trimming never invalidates a
-        // recorded `line_idx`.
-        while lines.last().is_some_and(|l| l.spans.iter().all(|s| s.content.is_empty())) {
-            lines.pop();
-        }
-
+        let (lines, links) = parse_markdown(&self.content);
         (Text::from(lines), links)
-    }
-
-    /// The style currently at the top of the stack (defaulting if somehow empty).
-    fn top_style(&self, style_stack: &[Style]) -> Style {
-        style_stack.last().copied().unwrap_or_default()
     }
 
     /// Advance the focused link by `delta` (`+1` next, `-1` previous), wrapping
@@ -511,6 +240,421 @@ impl MarkdownPanel {
             })
             .sum()
     }
+}
+
+/// Visual prefix prepended to every line inside a blockquote.
+pub(crate) const QUOTE_PREFIX: &str = "┃ ";
+
+/// Columns each list nesting level indents its items by.
+const LIST_INDENT: usize = 2;
+
+/// Whether `span` is block decoration rather than text: a list item's indent
+/// or marker (`• `, `3. `) or a blockquote bar. Lets a caller that wraps the
+/// lines of [`parse_markdown`] hang continuation rows under the text.
+pub(crate) fn is_block_prefix(span: &str) -> bool {
+    if span.is_empty() {
+        return false;
+    }
+    if span == QUOTE_PREFIX || span == "• " || span.chars().all(|c| c == ' ') {
+        return true;
+    }
+    span.strip_suffix(". ").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// The style currently at the top of the stack (defaulting if somehow empty).
+fn top_style(style_stack: &[Style]) -> Style {
+    style_stack.last().copied().unwrap_or_default()
+}
+
+/// Convert markdown into styled Ratatui [`Line`]s by walking the
+/// `pulldown-cmark` event stream, plus the links found along the way.
+///
+/// `pulldown-cmark` handles CommonMark parsing (including backslash escapes
+/// like `\_` and `\*`, which the templates emit via `escape_markdown`) so
+/// we no longer scan for inline markers by hand. We translate the linear
+/// event stream into styled lines, maintaining a [`Style`] stack so
+/// nested inline formatting (`**bold**`, `_italic_`, `` `code` ``) composes
+/// correctly, plus a little context to inject blockquote/list prefixes and
+/// emulate the prior table layout.
+///
+/// Spans carry only what the markdown adds (plain text has the default
+/// style), so a caller can lay its own base style under them with
+/// [`Style::patch`]. Soft breaks end the line, keeping the author's line
+/// breaks; nothing is wrapped to a width.
+pub(crate) fn parse_markdown(content: &str) -> (Vec<Line<'static>>, Vec<LinkSpan>) {
+    let palette = crate::theme::palette();
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
+    // Text inherits the style at the top of this stack.
+    let mut style_stack: Vec<Style> = vec![Style::default()];
+
+    // Links discovered so far, plus the in-progress link (if any). When a
+    // `Tag::Link` opens we record its URL, the span index where its text
+    // begins, and the line it begins on (`lines.len()`); when it closes we
+    // capture the span range. Link text is single-line in practice, but a
+    // soft break inside it would flush the line and invalidate the start span
+    // index — the recorded start line lets us detect that and recover (see
+    // `TagEnd::Link`) instead of silently dropping the link.
+    let mut links: Vec<LinkSpan> = Vec::new();
+    let mut pending_link: Option<(String, usize, usize)> = None;
+
+    // Context flags/counters for prefixes and the table layout hack.
+    let mut blockquote_depth: usize = 0;
+    // One entry per open list: the next item's number, `None` for bullets.
+    let mut lists: Vec<Option<u64>> = Vec::new();
+    // One entry per open list item: the column its text starts at, where
+    // the item's later lines (soft breaks, code lines) line up.
+    let mut item_hang: Vec<usize> = Vec::new();
+    // Whether the current line continues an open item and still needs that
+    // item's indent before its first text.
+    let mut continuation = false;
+    let mut in_table = false;
+    let mut cell_index: usize = 0;
+    // The first ("key") table column is padded to a fixed width. Inline
+    // formatting splits a cell into several text/code events, so accumulate
+    // the cell's visible text here and pad it exactly once on cell close —
+    // padding each fragment would inflate the column far past the target.
+    let mut key_buf = String::new();
+
+    // Whether `current_spans` holds anything beyond the blockquote prefix.
+    macro_rules! has_content {
+        () => {
+            current_spans
+                .iter()
+                .any(|s| !s.content.is_empty() && s.content.as_ref() != QUOTE_PREFIX)
+        };
+    }
+
+    // Push `current_spans` as a finished line (even when empty, so blank
+    // lines and paragraph spacing survive), then start a fresh line. When
+    // inside a blockquote, seed the new line with the `┃ ` prefix.
+    macro_rules! flush_line {
+        () => {{
+            lines.push(Line::from(std::mem::take(&mut current_spans)));
+            if blockquote_depth > 0 {
+                current_spans.push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
+            }
+            continuation = !item_hang.is_empty();
+        }};
+    }
+
+    // Indent a line that continues a list item, before its first text.
+    macro_rules! begin_text {
+        () => {{
+            if continuation {
+                continuation = false;
+                if let Some(&hang) = item_hang.last() {
+                    current_spans.push(Span::raw(" ".repeat(hang)));
+                }
+            }
+        }};
+    }
+
+    // Ensure a blank separator line precedes the next top-level block.
+    // `pulldown-cmark` collapses the blank lines between blocks into block
+    // structure, so we re-synthesize one space between adjacent blocks
+    // (table → heading, paragraph → heading, etc.) — but never at the very
+    // top and never two in a row. Nested blocks (list items, blockquote
+    // bodies) opt out so their lines stay tight.
+    macro_rules! ensure_blank {
+        () => {{
+            let has_pending = !current_spans.iter().all(|s| s.content.is_empty());
+            let last_blank =
+                lines.last().is_none_or(|l| l.spans.iter().all(|s| s.content.is_empty()));
+            if !has_pending && !lines.is_empty() && !last_blank {
+                lines.push(Line::from(""));
+            }
+        }};
+    }
+
+    // Text as written, in the current style. Inside a code block one event
+    // can span several lines, so each newline ends the line.
+    macro_rules! push_text {
+        ($text:expr, $style:expr) => {{
+            let style = $style;
+            for (i, piece) in $text.split('\n').enumerate() {
+                if i > 0 {
+                    flush_line!();
+                }
+                if !piece.is_empty() {
+                    begin_text!();
+                    current_spans.push(Span::styled(piece.to_string(), style));
+                }
+            }
+        }};
+    }
+
+    let parser = Parser::new_ext(content, Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH);
+
+    for event in parser {
+        match event {
+            MdEvent::Start(tag) => match tag {
+                Tag::Heading { level, .. } => {
+                    // Headings always stand apart from the preceding block.
+                    ensure_blank!();
+                    let style = match level {
+                        HeadingLevel::H1 => Style::default()
+                            .fg(palette.warning)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                        _ => Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+                    };
+                    style_stack.push(style);
+                }
+                Tag::Paragraph => {
+                    ensure_blank!();
+                }
+                Tag::BlockQuote(_) => {
+                    ensure_blank!();
+                    blockquote_depth += 1;
+                    // Blockquote body renders gray + italic, prefixed `┃ `.
+                    style_stack
+                        .push(Style::default().fg(palette.gray).add_modifier(Modifier::ITALIC));
+                    current_spans
+                        .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
+                }
+                Tag::CodeBlock(_) => {
+                    ensure_blank!();
+                    style_stack.push(
+                        top_style(&style_stack)
+                            .fg(palette.warning)
+                            .remove_modifier(Modifier::ITALIC),
+                    );
+                }
+                Tag::HtmlBlock => {
+                    ensure_blank!();
+                }
+                Tag::Table(_) => {
+                    ensure_blank!();
+                    in_table = true;
+                }
+                Tag::List(start) => {
+                    if lists.is_empty() {
+                        // Separate the list from the preceding block, but keep
+                        // items themselves tight (no blank between them).
+                        ensure_blank!();
+                    } else if has_content!() {
+                        // A nested list starts on its own line, not after
+                        // the text of the item holding it.
+                        flush_line!();
+                    }
+                    lists.push(start);
+                }
+                Tag::Item => {
+                    // The item draws its own indent and marker.
+                    continuation = false;
+                    let depth = lists.len().saturating_sub(1);
+                    if depth > 0 {
+                        current_spans.push(Span::raw(" ".repeat(depth * LIST_INDENT)));
+                    }
+                    let marker = match lists.last_mut() {
+                        Some(Some(n)) => {
+                            *n += 1;
+                            format!("{}. ", *n - 1)
+                        }
+                        _ => "• ".to_string(),
+                    };
+                    item_hang.push(depth * LIST_INDENT + marker.width());
+                    current_spans.push(Span::styled(marker, Style::default().fg(palette.accent)));
+                }
+                Tag::Strong => {
+                    let style = top_style(&style_stack).add_modifier(Modifier::BOLD);
+                    style_stack.push(style);
+                }
+                Tag::Emphasis => {
+                    let style = top_style(&style_stack).add_modifier(Modifier::ITALIC);
+                    style_stack.push(style);
+                }
+                Tag::Strikethrough => {
+                    let style = top_style(&style_stack).add_modifier(Modifier::CROSSED_OUT);
+                    style_stack.push(style);
+                }
+                Tag::Link { dest_url, .. } => {
+                    // Link text renders underlined in the informational color
+                    // so it reads as a link; the spans it wraps inherit this
+                    // via `top_style`. Remember where the text begins so the
+                    // close can record the span range for highlighting/opening.
+                    let style =
+                        Style::default().fg(palette.info).add_modifier(Modifier::UNDERLINED);
+                    style_stack.push(style);
+                    pending_link = Some((dest_url.into_string(), current_spans.len(), lines.len()));
+                }
+                Tag::TableHead => {
+                    cell_index = 0;
+                }
+                Tag::TableRow => {
+                    cell_index = 0;
+                }
+                Tag::TableCell => {
+                    // Columns after the key are separated by a bar.
+                    if cell_index > 1 {
+                        current_spans.push(Span::styled(" │ ", Style::default().fg(palette.dim)));
+                    }
+                    // First column ("key") renders dim, like the prior layout.
+                    let style = if cell_index == 0 {
+                        Style::default().fg(palette.dim)
+                    } else {
+                        top_style(&style_stack)
+                    };
+                    style_stack.push(style);
+                }
+                _ => {}
+            },
+            MdEvent::End(tag) => match tag {
+                TagEnd::Heading(_) => {
+                    style_stack.pop();
+                    flush_line!();
+                    // H1 keeps a trailing blank line so the title stands out
+                    // even when content follows immediately.
+                    if matches!(tag, TagEnd::Heading(HeadingLevel::H1)) {
+                        flush_line!();
+                    }
+                }
+                TagEnd::Paragraph => {
+                    flush_line!();
+                }
+                TagEnd::BlockQuote(_) => {
+                    style_stack.pop();
+                    blockquote_depth = blockquote_depth.saturating_sub(1);
+                    // The inner paragraph's flush already emitted the quote's
+                    // last line and speculatively re-seeded `current_spans`
+                    // with a "┃ " prefix. If only that prefix (or nothing) is
+                    // pending, drop it so the closed quote leaves no stray bar
+                    // line; otherwise flush any genuine trailing content.
+                    if has_content!() {
+                        flush_line!();
+                    } else {
+                        current_spans.clear();
+                    }
+                }
+                TagEnd::CodeBlock => {
+                    style_stack.pop();
+                    // The block's text ends in a newline, which already
+                    // closed its last line.
+                    if has_content!() {
+                        flush_line!();
+                    }
+                }
+                TagEnd::HtmlBlock => {
+                    if has_content!() {
+                        flush_line!();
+                    }
+                }
+                TagEnd::List(_) => {
+                    lists.pop();
+                }
+                TagEnd::Item => {
+                    // An item whose last line a nested list or paragraph
+                    // already emitted leaves nothing to flush.
+                    // Pop first, so the next line continues the enclosing
+                    // item, if any.
+                    item_hang.pop();
+                    if has_content!() {
+                        flush_line!();
+                    } else {
+                        continuation = !item_hang.is_empty();
+                    }
+                }
+                TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
+                    style_stack.pop();
+                }
+                TagEnd::Link => {
+                    style_stack.pop();
+                    // Record the link's text span range on the line it will
+                    // occupy once flushed. If a soft break flushed the line
+                    // mid-link (`start_line != lines.len()`), the recorded
+                    // `start` indexes a now-emitted line, so anchor to the
+                    // final line's spans (`start = 0`) rather than dropping the
+                    // link. If the link emitted no spans (empty text), skip it.
+                    if let Some((url, start, start_line)) = pending_link.take() {
+                        let start = if start_line == lines.len() { start } else { 0 };
+                        let end = current_spans.len();
+                        if end > start {
+                            links.push(LinkSpan {
+                                url,
+                                line_idx: lines.len(),
+                                span_range: start..end,
+                            });
+                        }
+                    }
+                }
+                TagEnd::Table => {
+                    in_table = false;
+                }
+                TagEnd::TableHead => {
+                    flush_line!();
+                }
+                TagEnd::TableRow => {
+                    flush_line!();
+                }
+                TagEnd::TableCell => {
+                    if cell_index == 0 {
+                        // Pad the fully-accumulated key once, so inline
+                        // formatting in the cell can't inflate the width.
+                        let style = top_style(&style_stack);
+                        current_spans.push(Span::styled(format!("{:<14} ", key_buf), style));
+                        key_buf.clear();
+                    }
+                    style_stack.pop();
+                    cell_index += 1;
+                }
+                _ => {}
+            },
+            // Raw HTML is shown as written: `Vec<u8>` in prose parses as an
+            // inline tag, and dropping it would silently lose characters.
+            MdEvent::Text(text) | MdEvent::InlineHtml(text) => {
+                if in_table && cell_index == 0 {
+                    // Buffer the key column; padded once at TagEnd::TableCell.
+                    key_buf.push_str(text.as_ref());
+                } else {
+                    push_text!(text, top_style(&style_stack));
+                }
+            }
+            // A block of HTML arrives a line at a time, each ending in `\n`.
+            MdEvent::Html(text) => {
+                push_text!(text, top_style(&style_stack));
+            }
+            MdEvent::Code(text) => {
+                if in_table && cell_index == 0 {
+                    // Inline code in a key cell still counts toward its width.
+                    key_buf.push_str(text.as_ref());
+                } else {
+                    begin_text!();
+                    // Code stays upright even inside emphasis or a quote.
+                    let style = top_style(&style_stack)
+                        .fg(palette.warning)
+                        .remove_modifier(Modifier::ITALIC);
+                    current_spans.push(Span::styled(text.into_string(), style));
+                }
+            }
+            MdEvent::SoftBreak | MdEvent::HardBreak => {
+                flush_line!();
+            }
+            MdEvent::Rule => {
+                flush_line!();
+                lines.push(Line::from(Span::styled(
+                    "─".repeat(20),
+                    Style::default().fg(palette.dim),
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    // Emit any trailing spans that weren't terminated by a block end.
+    if has_content!() {
+        lines.push(Line::from(std::mem::take(&mut current_spans)));
+    }
+
+    // Drop trailing blank lines so block terminators (paragraphs, the H1
+    // spacer) don't leave dangling empty rows at the end of the panel.
+    // Links always live on non-blank lines, so trimming never invalidates a
+    // recorded `line_idx`.
+    while lines.last().is_some_and(|l| l.spans.iter().all(|s| s.content.is_empty())) {
+        lines.pop();
+    }
+
+    (lines, links)
 }
 
 impl Component for MarkdownPanel {
@@ -732,18 +876,85 @@ mod tests {
     }
 
     #[test]
-    fn generic_signatures_survive_only_inside_a_code_span() {
-        // Why breadcrumb text is wrapped in a code span: bare `<T>` parses as
-        // inline HTML, and this panel handles no Html/InlineHtml event, so the
-        // tags vanish and the signature silently loses characters.
-        assert_eq!(rendered_text("impl<T> Service<T> {"), "impl Service {");
-        // Wrapped, it comes through verbatim — angle brackets included.
+    fn generic_signatures_survive_in_prose_and_code_spans() {
+        // Bare `<T>` parses as inline HTML; it is shown as written rather
+        // than dropped, so comments mentioning `Vec<u8>` keep their text.
+        assert_eq!(rendered_text("impl<T> Service<T> {"), "impl<T> Service<T> {");
+        assert_eq!(rendered_text("<details>\nhidden\n</details>"), "<details>\nhidden\n</details>");
+        // Wrapped, it comes through verbatim too — angle brackets included.
         assert_eq!(rendered_text("`impl<T> Service<T> {`"), "impl<T> Service<T> {");
         // A breadcrumb line as the templates now emit it.
         assert_eq!(
             rendered_text("`6` `    async fn get<K: Key>(&self) -> Result<Vec<u8>> {`"),
             "6     async fn get<K: Key>(&self) -> Result<Vec<u8>> {"
         );
+    }
+
+    #[test]
+    fn ordered_lists_keep_their_numbers() {
+        assert_eq!(rendered_lines("3. three\n4. four"), vec!["3. three", "4. four"]);
+    }
+
+    #[test]
+    fn nested_lists_start_their_own_indented_lines() {
+        assert_eq!(
+            rendered_lines("- outer\n  - inner\n  - inner two\n- next"),
+            vec!["• outer", "  • inner", "  • inner two", "• next"]
+        );
+    }
+
+    #[test]
+    fn list_items_keep_their_indent_across_line_breaks() {
+        assert_eq!(
+            rendered_lines("- outer\n  - first\n    second\n- next\n  more"),
+            vec!["• outer", "  • first", "    second", "• next", "  more"]
+        );
+        assert_eq!(
+            rendered_lines("1. code:\n\n   ```\n   a\n   b\n   ```\n\nafter"),
+            vec!["1. code:", "", "   a", "   b", "", "after"]
+        );
+    }
+
+    #[test]
+    fn table_cells_after_the_key_are_separated() {
+        assert_eq!(
+            rendered_lines(
+                "| check | state | next |\n|---|---|---|\n| a_very_long_key | failed | retry |"
+            ),
+            vec!["check          state │ next", "a_very_long_key failed │ retry"]
+        );
+    }
+
+    #[test]
+    fn code_blocks_keep_their_lines_and_indentation() {
+        let md = "before\n\n```rust\nfn main() {\n    run();\n}\n```\nafter";
+        assert_eq!(
+            rendered_lines(md),
+            vec!["before", "", "fn main() {", "    run();", "}", "", "after"]
+        );
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown(md);
+        let style = style_of(&panel, "run();").unwrap();
+        assert_eq!(style.fg, Some(crate::theme::palette().warning));
+    }
+
+    #[test]
+    fn code_spans_stay_upright_inside_emphasis() {
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown("_see `x` here_");
+        let code = style_of(&panel, "x").unwrap();
+        assert!(code.sub_modifier.contains(Modifier::ITALIC), "{code:?}");
+        let em = style_of(&panel, "see").unwrap();
+        assert!(em.add_modifier.contains(Modifier::ITALIC), "{em:?}");
+    }
+
+    #[test]
+    fn strikethrough_is_crossed_out() {
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown("a ~~gone~~ b");
+        assert_eq!(rendered_text("a ~~gone~~ b"), "a gone b");
+        let style = style_of(&panel, "gone").unwrap();
+        assert!(style.add_modifier.contains(Modifier::CROSSED_OUT));
     }
 
     #[test]

@@ -5,12 +5,18 @@
 //! source lines, so everything that scrolls (offset, scrollbar, cursor) works
 //! in display rows. [`RowLayout`] is that mapping, rebuilt whenever threads are
 //! added, folded or unfolded, or the pane width changes (bodies wrap).
+//!
+//! Comment bodies are markdown: they render through the same parser as the
+//! info panel ([`parse_markdown`]), then wrap here span by span, because the
+//! layout must know each bubble's height before anything is drawn.
 
 use std::collections::HashSet;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use super::markdown_panel::{QUOTE_PREFIX, is_block_prefix, parse_markdown};
 
 /// One comment thread shown under its anchored code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,21 +70,23 @@ pub(crate) enum DisplayRow {
 }
 
 /// The text of one bubble row, styled at render time (the focused thread's
-/// border is highlighted, so styling can't be baked into the layout).
+/// border is highlighted, so styling can't be baked into the layout). Body
+/// rows carry only the markdown's own styling; the bubble's text style goes
+/// under it when drawn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BubbleLine {
     Top {
         author: String,
         when: String,
     },
-    Body(String),
+    Body(Line<'static>),
     /// A reply's header: who wrote it and when.
     ReplyHead {
         author: String,
         when: String,
     },
     /// A row of a reply's body, indented under its header.
-    ReplyBody(String),
+    ReplyBody(Line<'static>),
     /// A folded thread's stand-in for its replies: `↳ N replies`.
     Replies(usize),
     Bottom,
@@ -184,16 +192,12 @@ pub(crate) fn bubble_lines(
         None => root.when.clone(),
     };
     lines.push(BubbleLine::Top { author: root.author.clone(), when });
-    for paragraph in root.body.lines() {
-        lines.extend(wrap(paragraph, width).into_iter().map(BubbleLine::Body));
-    }
+    lines.extend(body_rows(&root.body, width).map(BubbleLine::Body));
     for reply in replies {
         lines
             .push(BubbleLine::ReplyHead { author: reply.author.clone(), when: reply.when.clone() });
-        for paragraph in reply.body.lines() {
-            let room = width.saturating_sub(REPLY_INDENT);
-            lines.extend(wrap(paragraph, room).into_iter().map(BubbleLine::ReplyBody));
-        }
+        let room = width.saturating_sub(REPLY_INDENT);
+        lines.extend(body_rows(&reply.body, room).map(BubbleLine::ReplyBody));
     }
     lines.push(BubbleLine::Bottom);
     lines
@@ -233,40 +237,157 @@ pub(crate) fn stack_rail(desired: &[usize], heights: &[usize]) -> Vec<usize> {
         .collect()
 }
 
-/// Word-wrap `text` to `width` display columns; `0` means no wrapping.
+/// The rows of a comment `body`: its markdown rendered, then wrapped to
+/// `width` display columns.
+///
+/// A bubble can't open links, so each link's destination follows its text
+/// (`docs (https://…)`) unless the text already is the destination.
+fn body_rows(body: &str, width: usize) -> impl Iterator<Item = Line<'static>> {
+    let (mut lines, links) = parse_markdown(body);
+    // Last link first, so inserting a span leaves earlier ranges valid.
+    for link in links.iter().rev() {
+        let Some(line) = lines.get_mut(link.line_idx) else { continue };
+        let Some(text_spans) = line.spans.get(link.span_range.clone()) else { continue };
+        let text: String = text_spans.iter().map(|s| s.content.as_ref()).collect();
+        if text == link.url || link.url.is_empty() {
+            continue;
+        }
+        let dim = Style::default().fg(crate::theme::palette().dim);
+        line.spans.insert(link.span_range.end, Span::styled(format!(" ({})", link.url), dim));
+    }
+    lines.into_iter().flat_map(move |line| wrap_line(&line, width))
+}
+
+/// One character of styled text.
+type Cell = (char, Style);
+
+/// Display width of `cells`.
+fn cells_width(cells: &[Cell]) -> usize {
+    cells.iter().map(|(c, _)| c.width().unwrap_or(0)).sum()
+}
+
+/// `cells` regrouped into spans, one per run of a single style.
+fn cells_to_spans(cells: &[Cell]) -> Vec<Span<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut run = String::new();
+    let mut run_style = None;
+    for &(c, style) in cells {
+        if run_style.is_some_and(|s| s != style) {
+            spans.push(Span::styled(std::mem::take(&mut run), run_style.unwrap_or_default()));
+        }
+        run_style = Some(style);
+        run.push(c);
+    }
+    if let Some(style) = run_style {
+        spans.push(Span::styled(run, style));
+    }
+    spans
+}
+
+/// Word-wrap a styled `line` to `width` display columns; `0` means no
+/// wrapping. A list item's marker, a quote's bar and leading indentation
+/// form a prefix that continuation rows hang under (a quote keeps its bar
+/// on every row), unless it leaves no room for text.
+pub(crate) fn wrap_line(line: &Line<'static>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 || line.width() <= width {
+        return vec![line.clone()];
+    }
+    let lead = line.spans.iter().take_while(|s| is_block_prefix(&s.content)).count();
+    let mut cells: Vec<Cell> = line.spans[lead..]
+        .iter()
+        .flat_map(|s| s.content.chars().map(move |c| (c, s.style)))
+        .collect();
+    let indent = cells.iter().take_while(|(c, _)| *c == ' ').count();
+    let mut first: Vec<Span<'static>> = line.spans[..lead].to_vec();
+    first.extend(cells_to_spans(&cells[..indent]));
+    let mut hang: Vec<Span<'static>> =
+        line.spans[..lead]
+            .iter()
+            .map(|s| {
+                if s.content == QUOTE_PREFIX { s.clone() } else { Span::raw(" ".repeat(s.width())) }
+            })
+            .collect();
+    if indent > 0 {
+        hang.push(Span::raw(" ".repeat(indent)));
+    }
+    let prefix_width = first.iter().map(Span::width).sum::<usize>();
+    // The widest character must fit beside the prefix, or its row would
+    // overflow the box.
+    let widest = cells[indent..].iter().map(|(c, _)| c.width().unwrap_or(0)).max().unwrap_or(0);
+    if prefix_width + widest.max(1) > width {
+        // No room beside the prefix: wrap it along with the text.
+        cells =
+            line.spans.iter().flat_map(|s| s.content.chars().map(move |c| (c, s.style))).collect();
+        return wrap_cells(&cells, width)
+            .iter()
+            .map(|row| Line::from(cells_to_spans(row)))
+            .collect();
+    }
+    let rows = wrap_cells(&cells[indent..], width - prefix_width);
+    rows.iter()
+        .enumerate()
+        .map(|(i, row)| {
+            let mut spans = if i == 0 { first.clone() } else { hang.clone() };
+            spans.extend(cells_to_spans(row));
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// Word-wrap plain `text` to `width` display columns; see [`wrap_cells`].
+#[cfg(test)]
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    let cells: Vec<Cell> = text.chars().map(|c| (c, Style::default())).collect();
+    wrap_cells(&cells, width).iter().map(|row| row.iter().map(|(c, _)| c).collect()).collect()
+}
+
+/// Word-wrap `cells` to `width` display columns; `0` means no wrapping.
 /// Words longer than a line are split. Every row takes at least one
 /// character, so a character wider than `width` (`界` at width 1) gets a row
 /// of its own instead of stalling the wrap.
-pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
-    use unicode_width::UnicodeWidthChar;
-    if width == 0 || text.width() <= width {
-        return vec![text.to_string()];
+fn wrap_cells(cells: &[Cell], width: usize) -> Vec<Vec<Cell>> {
+    if width == 0 || cells_width(cells) <= width {
+        return vec![cells.to_vec()];
     }
     let mut out = Vec::new();
-    let mut line = String::new();
-    for word in text.split(' ') {
-        if line.is_empty() && word.width() <= width {
-            line.push_str(word);
+    let mut line: Vec<Cell> = Vec::new();
+    // Each word with the style of the space before it, which joins it to
+    // the word before on the same row.
+    let mut words: Vec<(&[Cell], Style)> = Vec::new();
+    let mut start = 0;
+    let mut space = Style::default();
+    for (i, &(c, style)) in cells.iter().enumerate() {
+        if c == ' ' {
+            words.push((&cells[start..i], space));
+            space = style;
+            start = i + 1;
+        }
+    }
+    words.push((&cells[start..], space));
+    for (word, space) in words {
+        let word_width = cells_width(word);
+        if line.is_empty() && word_width <= width {
+            line.extend_from_slice(word);
             continue;
         }
-        if !line.is_empty() && line.width() + 1 + word.width() <= width {
-            line.push(' ');
-            line.push_str(word);
+        if !line.is_empty() && cells_width(&line) + 1 + word_width <= width {
+            line.push((' ', space));
+            line.extend_from_slice(word);
             continue;
         }
         if !line.is_empty() {
             out.push(std::mem::take(&mut line));
         }
-        if word.width() <= width {
-            line.push_str(word);
+        if word_width <= width {
+            line.extend_from_slice(word);
             continue;
         }
         // A word wider than a line: split it, one character at least per row.
-        for c in word.chars() {
-            if !line.is_empty() && line.width() + c.width().unwrap_or(0) > width {
+        for &cell in word {
+            if !line.is_empty() && cells_width(&line) + cell.0.width().unwrap_or(0) > width {
                 out.push(std::mem::take(&mut line));
             }
-            line.push(c);
+            line.push(cell);
         }
     }
     if !line.is_empty() || out.is_empty() {
@@ -324,7 +445,7 @@ pub(crate) fn render_bubble_line(
         }
         BubbleLine::Body(text) => {
             spans.push(Span::styled("│ ", border));
-            spans.push(Span::styled(text.clone(), text_style));
+            spans.extend(styled_body(text, text_style));
             spans.push(pad(text.width()));
             spans.push(Span::styled(" │", border));
         }
@@ -341,7 +462,7 @@ pub(crate) fn render_bubble_line(
         BubbleLine::ReplyBody(text) => {
             spans.push(Span::styled("│ ", border));
             spans.push(Span::raw(" ".repeat(REPLY_INDENT)));
-            spans.push(Span::styled(text.clone(), text_style));
+            spans.extend(styled_body(text, text_style));
             spans.push(pad(REPLY_INDENT + text.width()));
             spans.push(Span::styled(" │", border));
         }
@@ -374,6 +495,15 @@ pub(crate) fn render_bubble_line(
         }
     }
     Line::from(spans)
+}
+
+/// A body row's spans over the bubble's `base` text style, so plain text
+/// takes the bubble's look and markdown only adds to it.
+fn styled_body<'a>(
+    text: &'a Line<'static>,
+    base: Style,
+) -> impl Iterator<Item = Span<'static>> + 'a {
+    text.spans.iter().map(move |s| Span::styled(s.content.clone(), base.patch(s.style)))
 }
 
 /// Fit an `author · when` header into `room` columns: shorten the author
@@ -479,7 +609,7 @@ mod tests {
             folded_bubble_lines(&entries, None, 40),
             vec![
                 BubbleLine::Top { author: "a".into(), when: "today".into() },
-                BubbleLine::Body("one".into()),
+                BubbleLine::Body(Line::from("one")),
                 BubbleLine::Replies(1),
                 BubbleLine::Bottom,
             ],
@@ -573,11 +703,11 @@ mod tests {
                 .add_modifier
                 .contains(Modifier::ITALIC)
         };
-        assert!(italic(&BubbleLine::Body("root text".into()), "root text"));
-        assert!(italic(&BubbleLine::ReplyBody("reply text".into()), "reply text"));
+        assert!(italic(&BubbleLine::Body(Line::from("root text")), "root text"));
+        assert!(italic(&BubbleLine::ReplyBody(Line::from("reply text")), "reply text"));
         let top = BubbleLine::Top { author: "claude".into(), when: "today 10:00".into() };
         assert!(!italic(&top, "claude"), "the author stays upright");
-        assert!(!italic(&BubbleLine::Body("x".into()), "│"), "borders stay upright");
+        assert!(!italic(&BubbleLine::Body(Line::from("x")), "│"), "borders stay upright");
     }
 
     #[test]
@@ -620,6 +750,113 @@ mod tests {
                     .iter()
                     .map(|s| s.content.as_ref())
                     .collect();
+                assert_eq!(row.width(), width, "width {width}: {row:?}");
+            }
+        }
+    }
+
+    fn row_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    fn body_text(entries: &[InlineComment], width: usize) -> Vec<String> {
+        bubble_lines(entries, None, width)
+            .iter()
+            .filter_map(|l| match l {
+                BubbleLine::Body(line) | BubbleLine::ReplyBody(line) => Some(row_text(line)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn comment(body: &str) -> InlineComment {
+        InlineComment { id: String::new(), author: "a".into(), when: "t".into(), body: body.into() }
+    }
+
+    #[test]
+    fn bodies_render_markdown_without_its_syntax() {
+        let entries = [comment("Use **`parse`** here.\n\n- one\n- two")];
+        assert_eq!(body_text(&entries, 40), vec!["Use parse here.", "", "• one", "• two"]);
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Blue,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let lines = bubble_lines(&entries, None, 40);
+        let row = render_bubble_line(&lines[1], 4, 40, false, &style);
+        let code = row.spans.iter().find(|s| s.content == "parse").unwrap().style;
+        assert!(code.add_modifier.contains(Modifier::BOLD), "{code:?}");
+        let plain = row.spans.iter().find(|s| s.content.contains("Use")).unwrap().style;
+        assert_eq!(plain.fg, Some(Color::Blue), "plain text keeps the bubble colour");
+        assert!(plain.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn wrapped_list_items_and_quotes_hang_under_their_text() {
+        assert_eq!(
+            body_text(&[comment("- alpha beta gamma")], 10),
+            vec!["• alpha", "  beta", "  gamma"]
+        );
+        assert_eq!(
+            body_text(&[comment("> alpha beta gamma")], 10),
+            vec!["┃ alpha", "┃ beta", "┃ gamma"]
+        );
+        assert_eq!(
+            body_text(&[comment("```\n    let value = compute();\n```")], 16),
+            vec!["    let value =", "    compute();"]
+        );
+    }
+
+    #[test]
+    fn links_show_their_destination() {
+        assert_eq!(
+            body_text(&[comment("see [docs](https://x.dev) and <https://y.dev>")], 60),
+            vec!["see docs (https://x.dev) and https://y.dev"]
+        );
+    }
+
+    #[test]
+    fn wide_characters_that_cannot_fit_beside_a_prefix_drop_the_hang() {
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let entries = [comment("> 界界")];
+        for line in bubble_lines(&entries, None, 3) {
+            let row = row_text(&render_bubble_line(&line, 4, 12, false, &style));
+            assert_eq!(row.width(), 12, "{row:?}");
+        }
+    }
+
+    #[test]
+    fn wrapping_keeps_each_words_style() {
+        let line = Line::from(vec![
+            Span::raw("plain "),
+            Span::styled("bold words", Style::default().add_modifier(Modifier::BOLD)),
+        ]);
+        let rows = wrap_line(&line, 10);
+        assert_eq!(rows.iter().map(row_text).collect::<Vec<_>>(), vec!["plain bold", "words"]);
+        assert!(rows[1].spans[0].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(rows[0].spans[0].style, Style::default());
+    }
+
+    #[test]
+    fn markdown_rows_fit_even_very_narrow_boxes() {
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let body = "# Heading\n\n1. a **bold** item that wraps\n   - nested `code` item\n\n> quoted text that wraps\n\n```\n        deeply_indented_code();\n```";
+        let entries = [comment(body), comment(body)];
+        for width in [12, 14, 18, 24, 30] {
+            let text_width = width - 4 - BUBBLE_CHROME;
+            for line in bubble_lines(&entries, None, text_width) {
+                let row = row_text(&render_bubble_line(&line, 4, width, true, &style));
                 assert_eq!(row.width(), width, "width {width}: {row:?}");
             }
         }
