@@ -504,8 +504,49 @@ fn render_theme(area: Rect, buf: &mut Buffer, themes: &[String], selected: usize
     ratatui::widgets::StatefulWidget::render(list, area, buf, &mut state);
 }
 
+/// Hard-wrap `s` into chunks no wider than `width` display columns.
+///
+/// Paths have few spaces, so word wrapping would leave long ones unbroken;
+/// splitting on grapheme boundaries keeps every chunk within the column, and
+/// measuring whole graphemes matches how the terminal renders them (e.g. an
+/// emoji presentation sequence is wider than its code points summed).
+fn wrap_to_width(s: &str, width: usize) -> Vec<String> {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+
+    let width = width.max(1);
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+    for grapheme in s.graphemes(true) {
+        let w = grapheme.width();
+        if current_width + w > width && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push_str(grapheme);
+        current_width += w;
+    }
+    if !current.is_empty() || chunks.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+/// Narrowest value column the side-by-side Configuration layout accepts before
+/// falling back to the compact (value-under-label) layout.
+const MIN_VALUE_WIDTH: usize = 16;
+
+/// Indent of value lines in the compact Configuration layout.
+const COMPACT_VALUE_INDENT: usize = 4;
+
 /// Render the Configuration tab: a `label : value` list of important paths and
 /// settings, with labels aligned to the widest one.
+///
+/// Long values wrap onto continuation lines indented under the value column,
+/// so each row's height is known up front. The text is then scrolled line by
+/// line to keep the selected row visible on short terminals — showing its
+/// first lines even when the row is taller than the whole area.
 fn render_configuration(
     area: Rect,
     buf: &mut Buffer,
@@ -514,8 +555,17 @@ fn render_configuration(
 ) {
     let palette = crate::theme::palette();
     let label_width = rows.iter().map(|(label, _, _)| label.len()).max().unwrap_or(0);
+    // Side-by-side: marker (2) + label + two-space gap, then the value. When
+    // that leaves too little room for the value (narrow terminals), switch to a
+    // compact layout with the value on its own lines under the label.
+    let side_by_side_indent = 2 + label_width + 2;
+    let compact = (area.width as usize).saturating_sub(side_by_side_indent) < MIN_VALUE_WIDTH;
+    let value_indent = if compact { COMPACT_VALUE_INDENT } else { side_by_side_indent };
+    let value_width = (area.width as usize).saturating_sub(value_indent);
 
     let mut text = Text::default();
+    // Line span (start, end) of the selected row, for scrolling.
+    let mut selected_span = (0, 0);
     for (i, (label, value, has_path)) in rows.iter().enumerate() {
         let is_selected = i == selected_row;
         let is_link = has_path.is_some();
@@ -541,13 +591,31 @@ fn render_configuration(
             Style::default().fg(palette.emphasis)
         };
 
-        text.push_line(Line::from(vec![
-            marker,
-            Span::styled(format!("{label:<label_width$}  "), label_style),
-            Span::styled(value.clone(), value_style),
-        ]));
+        let mut chunks = wrap_to_width(value, value_width).into_iter();
+        let mut lines = if compact {
+            vec![Line::from(vec![marker, Span::styled(label.to_string(), label_style)])]
+        } else {
+            let first = chunks.next().unwrap_or_default();
+            vec![Line::from(vec![
+                marker,
+                Span::styled(format!("{label:<label_width$}  "), label_style),
+                Span::styled(first, value_style),
+            ])]
+        };
+        lines.extend(chunks.map(|chunk| {
+            Line::from(vec![Span::raw(" ".repeat(value_indent)), Span::styled(chunk, value_style)])
+        }));
+        if is_selected {
+            selected_span = (text.lines.len(), text.lines.len() + lines.len());
+        }
+        text.lines.extend(lines);
     }
-    Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
+
+    // Bring the selected row's end into view, but never scroll past its start.
+    let (row_start, row_end) = selected_span;
+    let offset = row_end.saturating_sub(area.height as usize).min(row_start);
+    let offset = u16::try_from(offset).unwrap_or(u16::MAX);
+    Paragraph::new(text).scroll((offset, 0)).render(area, buf);
 }
 
 /// Render the About tab: version and project links.
@@ -787,5 +855,66 @@ mod tests {
         // An unrelated key is still consumed while the overlay is open.
         assert_eq!(overlay.handle_key(KeyCode::Char('q'), &[]), SettingsAction::Handled);
         assert!(overlay.is_visible());
+    }
+
+    #[test]
+    fn wrap_to_width_splits_long_values() {
+        assert_eq!(wrap_to_width("abcdef", 4), vec!["abcd", "ef"]);
+        assert_eq!(wrap_to_width("abc", 10), vec!["abc"]);
+        assert_eq!(wrap_to_width("", 5), vec![""]);
+    }
+
+    #[test]
+    fn configuration_scrolls_to_keep_selected_row_visible() {
+        let rows: Vec<(&'static str, String, Option<String>)> =
+            (0..20).map(|i| ("Row", format!("value-{i}"), None)).collect();
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        render_configuration(area, &mut buf, &rows, 19);
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("value-19"), "selected row scrolled out of view:\n{rendered}");
+    }
+
+    #[test]
+    fn narrow_configuration_puts_values_under_labels() {
+        let rows: Vec<(&'static str, String, Option<String>)> = vec![
+            ("Content tab order", "Bookmarks".to_string(), None),
+            ("Executable", "/opt/codemark/bin/codemark".to_string(), None),
+        ];
+        let area = Rect::new(0, 0, 20, 10);
+        let mut buf = Buffer::empty(area);
+        render_configuration(area, &mut buf, &rows, 0);
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Bookmarks"), "value hidden on a narrow terminal:\n{rendered}");
+        assert!(rendered.contains("/opt/codemark/bi"), "value hidden:\n{rendered}");
+    }
+
+    #[test]
+    fn wrap_to_width_measures_whole_graphemes() {
+        // `#` + VS16 renders as a two-column emoji, so it can't share a
+        // three-column chunk with both `a`s.
+        assert_eq!(wrap_to_width("a#\u{fe0f}a", 3), vec!["a#\u{fe0f}", "a"]);
+    }
+
+    #[test]
+    fn oversized_selected_row_shows_its_start() {
+        let long = format!("/start/{}", "x".repeat(200));
+        let rows: Vec<(&'static str, String, Option<String>)> =
+            vec![("Version", "1.0".to_string(), None), ("Executable", long, None)];
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        render_configuration(area, &mut buf, &rows, 1);
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered.contains("Executable"), "oversized row not shown:\n{rendered}");
+        assert!(rendered.contains("/start/"), "oversized row start not shown:\n{rendered}");
     }
 }
