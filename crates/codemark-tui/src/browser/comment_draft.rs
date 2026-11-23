@@ -557,9 +557,14 @@ fn wrap_draft_line(
 
 /// The first line of `body`, cut to `max` chars with an ellipsis.
 fn excerpt(body: &str, max: usize) -> String {
-    let first = body.trim().lines().next().unwrap_or("");
+    // The text as the bubble shows it, so markdown syntax stays out.
+    let (lines, _links) = crate::component::markdown_panel::parse_markdown(body);
+    let text = |line: &ratatui::text::Line<'_>| -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    };
+    let first = lines.first().map(text).unwrap_or_default();
     let mut out: String = first.chars().take(max).collect();
-    if first.chars().count() > max || body.trim().lines().nth(1).is_some() {
+    if first.chars().count() > max || lines.len() > 1 {
         out.push('…');
     }
     out
