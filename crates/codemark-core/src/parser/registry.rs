@@ -109,6 +109,9 @@ impl LanguageRegistry {
 
             let manifest_path = entry.path().join("manifest.json");
             let wasm_path = entry.path().join("grammar.wasm");
+            // Stamp before reading: a file replaced after this point gives the
+            // next scan a different stamp, rather than matching stale contents.
+            let observed_stamp = (file_stamp(&wasm_path), file_stamp(&manifest_path));
 
             let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
                 // A dir holding a grammar.wasm but no readable manifest.json is a
@@ -166,10 +169,7 @@ impl LanguageRegistry {
                         );
                         continue;
                     }
-                    registry.stamps.insert(
-                        name_key.clone(),
-                        (file_stamp(&wasm_path), file_stamp(&manifest_path)),
-                    );
+                    registry.stamps.insert(name_key.clone(), observed_stamp);
                     registry.by_name.insert(name_key, lang.clone());
 
                     // Announce the override only now that the grammar is

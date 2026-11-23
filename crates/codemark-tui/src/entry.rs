@@ -831,18 +831,34 @@ fn is_ctrl_c(event: &Event) -> bool {
     )
 }
 
-/// Keep only the last focus change in `events`, dropping earlier ones.
+/// Drop focus changes that a later focus change supersedes.
 ///
 /// Flipping tabs while the UI is busy queues a `FocusLost`/`FocusGained` pair
-/// per switch. Only the final state matters: a trailing `FocusGained` reloads
-/// once, and a trailing `FocusLost` means the user is away again, so the reload
-/// waits for the next return.
+/// per switch. Within a run of focus changes only the last one matters: a
+/// trailing `FocusGained` reloads once, and a trailing `FocusLost` means the
+/// user is away again, so the reload waits for the next return.
+///
+/// User input ends a run. A `FocusGained` followed by a key press is kept, so
+/// its reload (which prunes rows deleted while unfocused) runs before the key
+/// acts on those rows.
 fn coalesce_focus_events(events: &mut Vec<Event>) {
     let is_focus = |e: &Event| matches!(e, Event::FocusGained | Event::FocusLost);
-    let Some(last) = events.iter().rposition(is_focus) else { return };
+    let is_input = |e: &Event| matches!(e, Event::Key(_) | Event::Mouse(_) | Event::Paste(_));
+    // Walk backwards: a focus change is superseded when another one follows it
+    // with no user input in between.
+    let mut superseded = vec![false; events.len()];
+    let mut later_focus = false;
+    for (i, event) in events.iter().enumerate().rev() {
+        if is_focus(event) {
+            superseded[i] = later_focus;
+            later_focus = true;
+        } else if is_input(event) {
+            later_focus = false;
+        }
+    }
     let mut index = 0;
-    events.retain(|e| {
-        let keep = !is_focus(e) || index == last;
+    events.retain(|_| {
+        let keep = !superseded[index];
         index += 1;
         keep
     });
@@ -881,7 +897,25 @@ mod tests {
             Event::FocusGained,
         ];
         coalesce_focus_events(&mut events);
-        assert_eq!(names(&events), ["tick", "key", "gained"]);
+        // The key press splits the runs: [lost, gained, tick, lost] → lost,
+        // then [gained] → gained.
+        assert_eq!(names(&events), ["tick", "lost", "key", "gained"]);
+
+        let mut flips = vec![
+            Event::FocusLost,
+            Event::FocusGained,
+            Event::Tick,
+            Event::FocusLost,
+            Event::FocusGained,
+        ];
+        coalesce_focus_events(&mut flips);
+        assert_eq!(names(&flips), ["tick", "gained"]);
+
+        // A reload followed by input keeps its reload, so the key sees fresh rows.
+        let mut acted =
+            vec![Event::FocusGained, key(KeyCode::Enter, KeyModifiers::NONE), Event::FocusLost];
+        coalesce_focus_events(&mut acted);
+        assert_eq!(names(&acted), ["gained", "key", "lost"]);
 
         let mut away = vec![Event::FocusGained, Event::Tick, Event::FocusLost];
         coalesce_focus_events(&mut away);
