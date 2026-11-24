@@ -377,8 +377,9 @@ impl BrowserLayout {
                     self.registry = registry;
                 }
                 // The user may also have installed or removed a WASM grammar via
-                // `codemark languages add`/`remove` while unfocused.
-                self.forget_grammar_state();
+                // `codemark languages add`/`remove` while unfocused. Only a real
+                // change drops the parse caches.
+                self.forget_grammar_state(false);
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a

@@ -834,11 +834,39 @@ impl BrowserLayout {
     /// Shared by `FocusGained` (a grammar installed from the CLI meanwhile)
     /// and [`reload_grammars`](Self::reload_grammars) (one installed from the
     /// Languages tab).
-    pub(crate) fn forget_grammar_state(&mut self) {
+    ///
+    /// Unless `force` is set, the parse caches are kept when the re-scan finds
+    /// the same grammars. Dropping them means recompiling every WASM grammar's
+    /// parser on the UI thread, and `FocusGained` fires on every tab switch.
+    /// In-flight health and preview results are discarded either way: the
+    /// panels are about to be rebuilt, and a result computed before the
+    /// rebuild (say, from a file edited while unfocused) must not overwrite it.
+    pub(crate) fn forget_grammar_state(&mut self, force: bool) {
         // Re-scan the
         // grammar cache so live resolution picks up new languages instead
         // of retaining the startup snapshot until the process restarts.
-        codemark_core::parser::registry::LanguageRegistry::refresh();
+        let changed = codemark_core::parser::registry::LanguageRegistry::refresh();
+        if changed || force {
+            self.drop_parse_caches();
+        } else {
+            tracing::debug!(target: "codemark::ui", "grammars unchanged; keeping parse caches");
+        }
+        // Advance the health epoch so any live-health task spawned before
+        // now is discarded on arrival rather than overwriting the panels
+        // we're about to rebuild.
+        self.health_generation = self.health_generation.wrapping_add(1);
+        tracing::debug!(
+            target: "codemark::ui",
+            health_generation = self.health_generation,
+            "advanced health epoch on grammar refresh"
+        );
+        // Same hazard for the bookmark preview: bumping the request id
+        // drops any in-flight/queued preview result.
+        self.cancel_inflight_preview();
+    }
+
+    /// Drop the parsers and parse trees built from the previous grammars.
+    fn drop_parse_caches(&mut self) {
         // The parse caches key their `Parser`/`Profile` by language name,
         // so after a refresh an *updated* grammar would still be served
         // from the old cached parser. Drop both the synchronous session
@@ -846,26 +874,13 @@ impl BrowserLayout {
         // rebuilds against the freshly discovered grammar.
         self.session_cache.clear();
         self.preview_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
-        // Advance the health epoch so any live-health task spawned under
-        // the previous grammar is discarded on arrival rather than
-        // overwriting the panels we're about to rebuild.
-        self.health_generation = self.health_generation.wrapping_add(1);
-        tracing::debug!(
-            target: "codemark::ui",
-            health_generation = self.health_generation,
-            "advanced health epoch on grammar refresh"
-        );
-        // Same hazard for the bookmark preview: a preview task spawned
-        // before the refresh would resolve with the old grammar. Bumping
-        // the request id drops any in-flight/queued preview result.
-        self.cancel_inflight_preview();
     }
 
     /// Pick up a grammar installed from inside the TUI: forget grammar state,
     /// then rebuild the panels so bookmarks that showed "No grammar" resolve.
     pub fn reload_grammars(&mut self) {
         tracing::debug!(target: "codemark::ui", "reloading grammars after an in-app install");
-        self.forget_grammar_state();
+        self.forget_grammar_state(true);
         self.refresh_all_panels_preserving_search();
         self.reconcile_preserved_search_rows();
     }

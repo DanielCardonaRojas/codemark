@@ -349,11 +349,13 @@ impl EventHandler {
             crossterm::execute!(std::io::stdout(), crossterm::event::EnableBracketedPaste)?;
         }
 
-        // Spawn the event loop task
-        tokio::spawn(event_loop_with_sender(config.tick_rate, tx.clone()));
-
         // Create an unbounded channel for custom events that we can send from anywhere
         let (unbounded_tx, mut unbounded_rx) = mpsc::unbounded_channel();
+
+        // Spawn the event loop task. Terminal input goes through the unbounded
+        // channel so the reader never waits for room (see `event_loop_with_sender`);
+        // only ticks go straight to the bounded channel, and are dropped when full.
+        tokio::spawn(event_loop_with_sender(config.tick_rate, tx.clone(), unbounded_tx.clone()));
 
         // Forward unbounded events to the main channel
         let tx_clone = tx.clone();
@@ -376,8 +378,20 @@ impl EventHandler {
     }
 }
 
-/// Event loop that sends to an mpsc channel.
-async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
+/// Event loop that reads the terminal and sends to the UI.
+///
+/// Input events go to `input_tx`, which is unbounded, so this loop keeps
+/// reading the terminal however far behind the UI falls. If it waited for room
+/// in the bounded channel instead, a UI stalled on a terminal that stopped
+/// reading our output (a hidden tab) would stop us reading its input too, and
+/// once the terminal blocked writing that input neither side could move again.
+/// The backlog stays small: it is only what the user actually typed or moved.
+/// Ticks carry no data and go to the bounded `tx`, dropped when it is full.
+async fn event_loop_with_sender(
+    tick_rate: Duration,
+    tx: mpsc::Sender<Event>,
+    input_tx: mpsc::UnboundedSender<Event>,
+) {
     // Move blocking crossterm operations to a dedicated thread using spawn_blocking
     // This prevents blocking the async executor threads with terminal I/O
     let tx = std::sync::Arc::new(tx);
@@ -409,7 +423,7 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
         match poll_result {
             Ok(Some(crossterm_event)) => {
                 if let Some(event) = Event::from_crossterm(crossterm_event)
-                    && tx.send(event).await.is_err()
+                    && input_tx.send(event).is_err()
                 {
                     // Channel closed, exit the loop
                     return;
@@ -418,7 +432,7 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
                 // input events are arriving (e.g. mouse events from mouse capture
                 // can starve tick generation otherwise).
                 if last_tick.elapsed() >= tick_rate {
-                    if tx.send(Event::Tick).await.is_err() {
+                    if !send_tick(&tx) {
                         return;
                     }
                     last_tick = std::time::Instant::now();
@@ -427,7 +441,7 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
             Ok(None) => {
                 // Timeout occurred, send tick event if needed
                 if last_tick.elapsed() >= tick_rate {
-                    if tx.send(Event::Tick).await.is_err() {
+                    if !send_tick(&tx) {
                         // Channel closed, exit the loop
                         return;
                     }
@@ -436,12 +450,30 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
             }
             Err(_) => {
                 // Spawn blocking task failed or was cancelled
-                if tx.send(Event::Tick).await.is_err() {
+                if !send_tick(&tx) {
                     return;
                 }
                 last_tick = std::time::Instant::now();
             }
         }
+    }
+}
+
+/// Queue a tick without waiting for room. Returns `false` once the channel is
+/// closed.
+///
+/// A tick carries no data, so when the UI loop is stalled (e.g. blocked writing
+/// to a terminal that stopped reading) and the channel is full, the tick is
+/// dropped. Waiting instead would park the reader, so it stopped reading the
+/// terminal.
+fn send_tick(tx: &mpsc::Sender<Event>) -> bool {
+    match tx.try_send(Event::Tick) {
+        Ok(()) => true,
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::trace!(target: "codemark::ui", "event channel full; dropping tick");
+            true
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => false,
     }
 }
 

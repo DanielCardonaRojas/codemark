@@ -36,10 +36,22 @@ use crate::parser::profile::Profile;
 static GLOBAL_REGISTRY: LazyLock<RwLock<LanguageRegistry>> =
     LazyLock::new(|| RwLock::new(LanguageRegistry::discover()));
 
+/// Size and modification time of a file, or `None` if it couldn't be read.
+type FileStamp = Option<(u64, Option<std::time::SystemTime>)>;
+
+fn file_stamp(path: &std::path::Path) -> FileStamp {
+    std::fs::metadata(path).ok().map(|m| (m.len(), m.modified().ok()))
+}
+
 /// Registry of dynamically loaded languages, indexed by extension and name.
+#[derive(Default)]
 pub struct LanguageRegistry {
     by_extension: HashMap<String, Language>,
     by_name: HashMap<String, Language>,
+    /// `(grammar.wasm, manifest.json)` stamps per registered name, as they were
+    /// when the grammar was loaded. Lets [`refresh`](Self::refresh) tell an
+    /// in-place reinstall apart from an unchanged grammar.
+    stamps: HashMap<String, (FileStamp, FileStamp)>,
 }
 
 impl LanguageRegistry {
@@ -49,7 +61,7 @@ impl LanguageRegistry {
     /// they never prevent codemark from starting.
     fn discover() -> Self {
         let Some(grammar_dir) = global_grammars_dir() else {
-            return Self { by_extension: HashMap::new(), by_name: HashMap::new() };
+            return Self::default();
         };
 
         // Auto-create the directory so users have a discoverable place to drop WASM files
@@ -60,8 +72,7 @@ impl LanguageRegistry {
         // A read failure yields an empty registry at startup — there's nothing to
         // preserve yet. (`refresh` treats the same `None` differently: it keeps
         // the working registry rather than blanking it.)
-        Self::discover_in(&grammar_dir)
-            .unwrap_or_else(|| Self { by_extension: HashMap::new(), by_name: HashMap::new() })
+        Self::discover_in(&grammar_dir).unwrap_or_default()
     }
 
     /// Scan a specific grammar directory and build the registry.
@@ -73,7 +84,7 @@ impl LanguageRegistry {
     /// Split out from [`discover`](Self::discover) so the scan/skip logic can be
     /// tested against a fixture directory without touching the global cache.
     fn discover_in(grammar_dir: &std::path::Path) -> Option<Self> {
-        let mut registry = Self { by_extension: HashMap::new(), by_name: HashMap::new() };
+        let mut registry = Self::default();
 
         // Recover any install whose swap was interrupted mid-replace by
         // `codemark languages add`, which leaves a `.bak-<name>` when the process
@@ -98,6 +109,9 @@ impl LanguageRegistry {
 
             let manifest_path = entry.path().join("manifest.json");
             let wasm_path = entry.path().join("grammar.wasm");
+            // Stamp before reading: a file replaced after this point gives the
+            // next scan a different stamp, rather than matching stale contents.
+            let observed_stamp = (file_stamp(&wasm_path), file_stamp(&manifest_path));
 
             let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
                 // A dir holding a grammar.wasm but no readable manifest.json is a
@@ -155,6 +169,7 @@ impl LanguageRegistry {
                         );
                         continue;
                     }
+                    registry.stamps.insert(name_key.clone(), observed_stamp);
                     registry.by_name.insert(name_key, lang.clone());
 
                     // Announce the override only now that the grammar is
@@ -231,9 +246,15 @@ impl LanguageRegistry {
     /// If the grammar directory can't be read (e.g. a transient FS error), the
     /// existing registry is kept rather than blanked, so already-resolved
     /// dynamic-language bookmarks don't suddenly become unsupported.
-    pub fn refresh() {
+    ///
+    /// Returns whether the set of grammars changed: one was added, removed,
+    /// reinstalled or re-claimed an extension. Callers holding parsers or parse
+    /// trees built from the old grammars only need to drop them when it did.
+    /// Rebuilding those (recompiling WASM) on every refresh is what made the
+    /// TUI stall each time its terminal regained focus.
+    pub fn refresh() -> bool {
         let Some(dir) = global_grammars_dir() else {
-            return;
+            return false;
         };
         let Some(mut fresh) = Self::discover_in(&dir) else {
             tracing::warn!(
@@ -241,7 +262,7 @@ impl LanguageRegistry {
                 path = %dir.display(),
                 "could not re-scan grammar cache; keeping current registry"
             );
-            return;
+            return false;
         };
 
         // A grammar can be dropped by an otherwise-successful scan if its manifest
@@ -257,7 +278,29 @@ impl LanguageRegistry {
         // decision is made against the registry we're actually replacing.
         let mut current = GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned");
         fresh.carry_forward_transiently_missing(&current);
+        let changed = !fresh.same_grammars(&current);
+        tracing::debug!(target: "codemark::registry", changed, "re-scanned grammar cache");
         *current = fresh;
+        changed
+    }
+
+    /// Whether `self` and `other` register the same grammars, loaded from the
+    /// same files, for the same names and extensions.
+    fn same_grammars(&self, other: &Self) -> bool {
+        fn sources(map: &HashMap<String, Language>) -> HashMap<&str, Option<&std::path::Path>> {
+            map.iter()
+                .map(|(key, lang)| {
+                    let wasm = match lang {
+                        Language::Dynamic(dl) => Some(dl.wasm_path.as_path()),
+                        _ => None,
+                    };
+                    (key.as_str(), wasm)
+                })
+                .collect()
+        }
+        self.stamps == other.stamps
+            && sources(&self.by_name) == sources(&other.by_name)
+            && sources(&self.by_extension) == sources(&other.by_extension)
     }
 
     /// Re-add grammars from `previous` that this (freshly scanned) registry is
@@ -281,6 +324,9 @@ impl LanguageRegistry {
                 "keeping grammar across refresh: its manifest was momentarily unreadable"
             );
             self.by_name.insert(name_key.clone(), lang.clone());
+            if let Some(stamp) = previous.stamps.get(name_key) {
+                self.stamps.insert(name_key.clone(), *stamp);
+            }
             for ext in &dl.extensions {
                 let key = ext.to_lowercase();
                 // Preserve resolution rules: don't displace a grammar that
@@ -434,6 +480,36 @@ mod tests {
         if with_wasm {
             std::fs::write(lang_dir.join("grammar.wasm"), b"\0asm").unwrap();
         }
+    }
+
+    /// A rescan of an untouched grammar cache must report "no change", or every
+    /// caller would throw away (and recompile) its parsers on each refresh.
+    #[test]
+    fn same_grammars_detects_only_real_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lua = r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#;
+        write_grammar(tmp.path(), "lua", lua, true);
+        let scan = || LanguageRegistry::discover_in(tmp.path()).unwrap();
+
+        let before = scan();
+        assert!(scan().same_grammars(&before), "an untouched cache is unchanged");
+
+        // A reinstall rewrites grammar.wasm in place: same name, same path.
+        std::fs::write(tmp.path().join("lua/grammar.wasm"), b"\0asm-rebuilt").unwrap();
+        let reinstalled = scan();
+        assert!(!reinstalled.same_grammars(&before), "a rewritten grammar.wasm is a change");
+
+        write_grammar(
+            tmp.path(),
+            "ruby",
+            r#"{ "name": "ruby", "extensions": ["rb"], "profile": {} }"#,
+            true,
+        );
+        let added = scan();
+        assert!(!added.same_grammars(&reinstalled), "an added grammar is a change");
+
+        std::fs::remove_dir_all(tmp.path().join("ruby")).unwrap();
+        assert!(!scan().same_grammars(&added), "a removed grammar is a change");
     }
 
     #[test]
