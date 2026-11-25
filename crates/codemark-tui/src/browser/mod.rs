@@ -3075,8 +3075,8 @@ impl BrowserLayout {
     }
 
     /// The sections of the stacked (portrait) layout in Tab order, top to
-    /// bottom: the lists column, then the preview and, unless it's hidden
-    /// (a collection overview has no details), the details pane under it.
+    /// bottom: the lists column, then the preview. The details pane under it
+    /// is pinned to its title bar there and never takes focus.
     fn stacked_focus_cycle(&self) -> Vec<(FocusArea, RightPaneFocus)> {
         let mut cycle: Vec<(FocusArea, RightPaneFocus)> = [
             FocusArea::Search,
@@ -3088,9 +3088,6 @@ impl BrowserLayout {
         .map(|area| (area, RightPaneFocus::Steps))
         .collect();
         cycle.push((FocusArea::Main, RightPaneFocus::Steps));
-        if !self.right_pane.overview_active {
-            cycle.push((FocusArea::Main, RightPaneFocus::Details));
-        }
         cycle
     }
 
@@ -3112,13 +3109,10 @@ impl BrowserLayout {
             Some(i) => (i + len - 1) % len,
             None => 0,
         };
-        let (area, right) = cycle[next];
+        let (area, _) = cycle[next];
         self.focus = area;
         if area == FocusArea::Main {
-            match right {
-                RightPaneFocus::Details => self.right_pane.focus_details(),
-                _ => self.right_pane.focus_steps(),
-            }
+            self.right_pane.focus_steps();
         }
         tracing::debug!(target: "codemark::ui", focus = ?self.focus, forward, "stacked focus cycle");
         self.update_focus_state();
@@ -3595,23 +3589,46 @@ mod tests {
         assert_eq!(layout.focus, FocusArea::Main);
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         layout.next_focus();
-        assert_eq!(layout.focus, FocusArea::Main);
-        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
-        render_at(&layout, 80, 30);
-        assert!(
-            layout.right_pane.steps.is_collapsed(),
-            "focused details push the preview to a bar"
-        );
-        assert!(layout.right_pane.details.last_area().height >= 3);
-        layout.next_focus();
-        assert_eq!(layout.focus, FocusArea::Search, "wraps to the top of the column");
+        assert_eq!(layout.focus, FocusArea::Search, "skips the pinned details and wraps");
 
         layout.previous_focus();
         assert_eq!(layout.focus, FocusArea::Main);
-        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
-        layout.previous_focus();
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         layout.previous_focus();
         assert_eq!(layout.focus, FocusArea::ContentPanel, "Shift+Tab climbs back up");
+    }
+
+    #[test]
+    fn stacked_details_stay_pinned_to_their_title_bar() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE)));
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps, "5 lands on the preview");
+
+        render_at(&layout, 80, 30);
+        assert_eq!(layout.right_pane.details.last_area().height, 1, "details stay a bar");
+        assert!(!layout.right_pane.steps.is_collapsed(), "the preview stays expanded");
+    }
+
+    #[test]
+    fn short_landscape_focused_details_collapse_the_preview() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Landscape;
+        layout.set_focus(FocusArea::Main);
+        render_at(&layout, 120, 24);
+        layout.right_pane.focus_details();
+        render_at(&layout, 120, 24);
+
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        assert!(layout.right_pane.steps.is_collapsed());
+        assert!(layout.right_pane.details.last_area().height >= 3);
     }
 
     #[test]
