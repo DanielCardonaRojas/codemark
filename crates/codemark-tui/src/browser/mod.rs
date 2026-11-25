@@ -3272,37 +3272,37 @@ impl BrowserLayout {
         // beside it (lazygit's portrait mode), and squashes every unfocused
         // section to a title bar so each column shows one expanded section.
         let portrait = self.layout_mode.is_portrait(area.width, area.height);
-        let (left_constraints, render_mode) =
-            if self.right_pane_size.is_fullscreen() || self.details_pane_size.is_fullscreen() {
-                // Right pane (or details) takes full width
-                (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
+        let (left_constraints, render_mode) = if self.right_pane_size.is_fullscreen()
+            || self.details_pane_size.is_fullscreen()
+        {
+            // Right pane (or details) takes full width
+            (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
+        } else {
+            // Use left pane size to determine layout
+            let left_percent = self.left_pane_size.left_width_percent();
+            if portrait && self.left_pane_size == LeftPaneSize::Regular {
+                // Stacked, the lists column is sized to its content: the
+                // expanded section gets the standard height whichever of
+                // Repos, Tags or Content it is, so the preview below doesn't
+                // jump as focus moves; the preview takes the rest.
+                (
+                    vec![Constraint::Length(self.left_pane.stacked_height()), Constraint::Min(0)],
+                    RenderMode::Both,
+                )
+            } else if let Some(right_percent) = self.left_pane_size.right_width_percent() {
+                // Both panes visible
+                (
+                    vec![
+                        Constraint::Percentage(left_percent),
+                        Constraint::Percentage(right_percent),
+                    ],
+                    RenderMode::Both,
+                )
             } else {
-                // Use left pane size to determine layout
-                let mut left_percent = self.left_pane_size.left_width_percent();
-                let mut right_percent = self.left_pane_size.right_width_percent();
-                // Stacked, an expanded Context/Filters panel shares the lists
-                // column with the Content list, so give the column more rows.
-                if portrait
-                    && self.left_pane_size == LeftPaneSize::Regular
-                    && matches!(self.focus, FocusArea::ContextPanel | FocusArea::FiltersPanel)
-                {
-                    left_percent = 55;
-                    right_percent = Some(45);
-                }
-                if let Some(right_percent) = right_percent {
-                    // Both panes visible
-                    (
-                        vec![
-                            Constraint::Percentage(left_percent),
-                            Constraint::Percentage(right_percent),
-                        ],
-                        RenderMode::Both,
-                    )
-                } else {
-                    // Only left pane visible (right hidden)
-                    (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
-                }
-            };
+                // Only left pane visible (right hidden)
+                (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
+            }
+        };
 
         let chunks = Layout::default()
             .direction(if portrait { Direction::Vertical } else { Direction::Horizontal })
@@ -3558,6 +3558,30 @@ mod tests {
         assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
         assert_eq!(layout.left_pane.content_panel.last_area().height, 1);
         assert!(layout.left_pane.content_panel.is_collapsed());
+    }
+
+    #[test]
+    fn stacked_sections_share_the_standard_height() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        for focus in [FocusArea::ContextPanel, FocusArea::FiltersPanel, FocusArea::ContentPanel] {
+            layout.set_focus(focus);
+            render_at(&layout, 80, 40);
+            let expanded = [
+                layout.left_pane.context_panel.last_area(),
+                layout.left_pane.filters_panel.last_area(),
+                layout.left_pane.content_panel.last_area(),
+            ]
+            .into_iter()
+            .map(|area| area.height)
+            .max();
+            assert_eq!(expanded, Some(left_pane::STACKED_SECTION_ROWS), "{focus:?} expanded");
+            assert_eq!(
+                layout.right_pane.last_area().y,
+                1 + left_pane::STACKED_SECTION_ROWS + 2,
+                "{focus:?}: the preview starts at the same row",
+            );
+        }
     }
 
     #[test]

@@ -21,8 +21,8 @@ const MIN_CONTENT_ROWS: u16 = 10;
 /// Fixed, and the same for Context, Filters and Content: when the active
 /// section instead filled the lists column, each one came out a different
 /// height and the column itself grew when focus reached Context or Filters, so
-/// moving focus made the whole stack jump.
-const STACKED_SECTION_ROWS: u16 = 8;
+/// moving focus made the whole stack jump. The frame plus eight list rows.
+pub const STACKED_SECTION_ROWS: u16 = 10;
 
 /// Render `panel` expanded, or as its title bar when only one row was laid
 /// out for it.
@@ -237,12 +237,10 @@ impl LeftPane {
             FocusArea::FiltersPanel => FocusArea::FiltersPanel,
             _ => FocusArea::ContentPanel,
         };
-        let height = |section: FocusArea| {
-            match (section == active, active_rows) {
-                (true, Some(rows)) => Constraint::Length(rows),
-                (true, None) => Constraint::Min(0),
-                (false, _) => Constraint::Length(1),
-            }
+        let height = |section: FocusArea| match (section == active, active_rows) {
+            (true, Some(rows)) => Constraint::Length(rows),
+            (true, None) => Constraint::Min(0),
+            (false, _) => Constraint::Length(1),
         };
         let search_rows = self.search_rows_squashed();
         let chunks = Layout::default()
@@ -252,8 +250,10 @@ impl LeftPane {
                 height(FocusArea::ContextPanel),
                 height(FocusArea::FiltersPanel),
                 height(FocusArea::ContentPanel),
-                // Absorbs any spare rows, so they never stretch a title bar.
-                Constraint::Min(0),
+                // With a fixed active height, absorbs any spare rows so they
+                // never stretch a title bar. Otherwise the active section is
+                // the one filling the pane, so this must take nothing.
+                if active_rows.is_some() { Constraint::Min(0) } else { Constraint::Length(0) },
             ])
             .split(area);
 
