@@ -1638,6 +1638,9 @@ impl BrowserLayout {
                     // Only the first step was resolved live; resolve the rest off
                     // the UI thread so entering the tour stays snappy.
                     self.spawn_collection_live_resolve();
+                    // Enter opens the item in the preview: focus it, not
+                    // whichever right-pane section (e.g. Details) was last used.
+                    self.right_pane.focus_steps();
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -1659,6 +1662,9 @@ impl BrowserLayout {
                     // Only the first step was resolved live; resolve the rest off
                     // the UI thread so entering the collection stays snappy.
                     self.spawn_collection_live_resolve();
+                    // Enter opens the item in the preview: focus it, not
+                    // whichever right-pane section (e.g. Details) was last used.
+                    self.right_pane.focus_steps();
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -1675,6 +1681,9 @@ impl BrowserLayout {
                         &id,
                         &mut self.session_cache,
                     );
+                    // Enter opens the item in the preview: focus it, not
+                    // whichever right-pane section (e.g. Details) was last used.
+                    self.right_pane.focus_steps();
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
