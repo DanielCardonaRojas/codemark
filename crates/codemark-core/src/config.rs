@@ -852,6 +852,9 @@ impl Config {
         if other.tui.content_tab_order.is_some() {
             self.tui.content_tab_order = other.tui.content_tab_order;
         }
+        if other.tui.layout.is_some() {
+            self.tui.layout = other.tui.layout;
+        }
 
         // Grammars config - override only if explicitly set in local, so a repo
         // can point at an internal or air-gapped registry.
@@ -1061,6 +1064,17 @@ theme = "Dracula"
         let local = Config::default();
         global.merge(local);
         assert_eq!(global.tui.theme.as_deref(), Some("Nord"));
+    }
+
+    #[test]
+    fn merge_overrides_tui_layout_and_keeps_it_when_local_unset() {
+        let mut global: Config = toml::from_str("[tui]\nlayout = \"landscape\"\n").unwrap();
+        let local: Config = toml::from_str("[tui]\nlayout = \"portrait\"\n").unwrap();
+        global.merge(local);
+        assert_eq!(global.tui.layout.as_deref(), Some("portrait"));
+
+        global.merge(Config::default());
+        assert_eq!(global.tui.layout.as_deref(), Some("portrait"));
     }
 
     #[test]

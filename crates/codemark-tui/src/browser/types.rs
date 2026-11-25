@@ -183,7 +183,9 @@ impl LayoutMode {
     /// `auto` turns portrait below this width...
     const AUTO_PORTRAIT_MAX_WIDTH: u16 = 99;
     /// ...when there are at least this many rows to stack the columns in.
-    const AUTO_PORTRAIT_MIN_HEIGHT: u16 = 24;
+    /// Measured on the browser area, which excludes the status bar row, so
+    /// this is a 24-row terminal.
+    const AUTO_PORTRAIT_MIN_HEIGHT: u16 = 23;
 
     /// Parse the config value; unset or unknown values mean [`Self::Auto`].
     pub fn from_config(value: Option<&str>) -> Self {
@@ -374,6 +376,8 @@ mod tests {
         assert_eq!(LayoutMode::from_config(Some("sideways")), LayoutMode::Auto);
 
         assert!(LayoutMode::Auto.is_portrait(80, 40), "narrow and tall");
+        assert!(LayoutMode::Auto.is_portrait(80, 23), "an 80x24 terminal minus the status bar");
+        assert!(!LayoutMode::Auto.is_portrait(80, 22));
         assert!(!LayoutMode::Auto.is_portrait(80, 20), "narrow but too short to stack");
         assert!(!LayoutMode::Auto.is_portrait(160, 40), "wide");
         assert!(LayoutMode::Portrait.is_portrait(200, 10));

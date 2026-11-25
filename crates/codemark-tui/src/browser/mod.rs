@@ -174,6 +174,9 @@ pub struct BrowserLayout {
     /// Whether the last frame stacked both columns into one (portrait with
     /// both visible), where Tab walks every section linearly. Set by render.
     stacked: std::cell::Cell<bool>,
+    /// The Content selection the preview was last loaded for, so the stacked
+    /// Tab cycle re-previews the list only when its selection has changed.
+    previewed_selection: Option<(ContentTab, String)>,
     /// Whether a tour pull is in progress (for post-pull panel rebuild)
     is_pulling_tour: bool,
     /// Remote tour ids with a pull task currently in flight. The dedup guard for
@@ -397,6 +400,7 @@ impl BrowserLayout {
             details_pane_size: DetailsPaneSize::Regular,
             layout_mode,
             stacked: std::cell::Cell::new(false),
+            previewed_selection: None,
             is_pulling_tour: false,
             pulling_tour_ids: std::collections::HashSet::new(),
             spinning_items: Vec::new(),
@@ -637,7 +641,20 @@ impl BrowserLayout {
     /// Synchronous: used for focus-enter / tab-change previews where an instant,
     /// fully-rendered pane is expected (and exercised by the e2e snapshots). The
     /// hot scrolling path uses [`on_content_selection_changed`] instead.
+    /// The Content list's active tab and selected item, if any.
+    fn content_selection(&self) -> Option<(ContentTab, String)> {
+        let tab = self.active_content_tab()?;
+        let id = self
+            .left_pane
+            .content_panel
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .and_then(|selected| selected.user_data.clone())?;
+        Some((tab, id))
+    }
+
     pub(super) fn preview_content_item(&mut self, tab: ContentTab, id: &str) {
+        self.previewed_selection = Some((tab, id.to_string()));
         match tab {
             ContentTab::Bookmarks => {
                 // Resolve from the selected row's owning repo (owned copy before
@@ -716,6 +733,7 @@ impl BrowserLayout {
     /// (see [`maybe_spawn_pending_preview`]), so a fast scroll through many items
     /// resolves only the final one.
     fn request_bookmark_preview(&mut self, id: &str) {
+        self.previewed_selection = Some((ContentTab::Bookmarks, id.to_string()));
         // Re-entering the same already-loaded bookmark needs no work.
         if !self.right_pane.is_loading()
             && self.inflight_preview.is_none()
@@ -769,6 +787,7 @@ impl BrowserLayout {
     /// loading indicator shows right away (replacing any overview from the tab we
     /// left) so the pane doesn't linger on stale content while the resolve runs.
     fn request_bookmark_preview_now(&mut self, id: &str) {
+        self.previewed_selection = Some((ContentTab::Bookmarks, id.to_string()));
         // Bump the request id so any in-flight/older result is treated as stale,
         // and drop any queued debounced request for a prior selection.
         self.preview_seq = self.preview_seq.wrapping_add(1);
@@ -3113,6 +3132,12 @@ impl BrowserLayout {
             None => 0,
         };
         let (area, right) = cycle[next];
+        // Walking the column leaves any `+`-expanded section: an expanded
+        // panel or details pane hides the others, and Tab must not land on a
+        // section that isn't drawn.
+        self.left_pane_size = LeftPaneSize::Regular;
+        self.left_pane.set_resize_mode(LeftPaneSize::Regular);
+        self.details_pane_size = DetailsPaneSize::Regular;
         self.focus = area;
         if area == FocusArea::Main {
             match right {
@@ -3121,12 +3146,13 @@ impl BrowserLayout {
             }
         }
         tracing::debug!(target: "codemark::ui", focus = ?self.focus, forward, "stacked focus cycle");
-        // Tab never moves the selection, so the preview already shows the
-        // selected item: don't re-preview it on reaching the list. That would
-        // swap an entered collection's steps back to its overview (and drop
-        // the details bar) just for walking the column; moving the selection
-        // still refreshes the preview as usual.
-        self.update_focus_state_with(false);
+        // Reaching the list re-previews its selection only if the preview is
+        // for a different item (say a tag filter, applied while away, moved
+        // the selection). Re-previewing the same item would swap an entered
+        // collection's steps back to its overview just for walking the column.
+        let refresh =
+            area == FocusArea::ContentPanel && self.content_selection() != self.previewed_selection;
+        self.update_focus_state_with(refresh);
         true
     }
 
@@ -3653,6 +3679,136 @@ mod tests {
         assert!(!layout.right_pane.overview_active, "returning to the list keeps the steps");
         assert_eq!(layout.right_pane.steps_data.len(), steps);
         assert_eq!(layout.right_pane.details.last_area().height, 1, "details bar still shown");
+    }
+
+    /// A single-repo layout seeded with one collection (one step), its
+    /// Collections tab selected and the Content panel focused.
+    fn collection_layout(mode: LayoutMode) -> BrowserLayout {
+        content_layout(mode, ContentTab::Collections)
+    }
+
+    /// [`collection_layout`] with the `tab` Content tab selected instead.
+    fn content_layout(mode: LayoutMode, tab: ContentTab) -> BrowserLayout {
+        let root = seeded_repo(
+            "bm-enter",
+            "fn enter",
+            "src/e.rs",
+            "fn enter() -> u8 { 1 }\n",
+            "col-enter",
+            "EnterTour",
+        );
+        let db = Database::open(&root.join(".codemark").join("codemark.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        let mut layout = BrowserLayout::new(db, handler);
+        layout.layout_mode = mode;
+        let tab_pos = layout.tab_position(tab);
+        layout.left_pane.content_panel.tabs.set_selected(tab_pos);
+        layout.set_focus(FocusArea::ContentPanel);
+        layout
+    }
+
+    fn press(layout: &mut BrowserLayout, code: ratatui::crossterm::event::KeyCode) {
+        use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
+        layout.handle_event(&crate::event::Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stacked_tab_back_to_the_list_re_previews_a_changed_selection() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Portrait);
+        // A second collection, so the selection can move while focus is away.
+        let db = layout.workspace.focus_db();
+        db.insert_collection(&e2e_collection("col-other", "OtherTour")).expect("seed collection");
+        db.add_to_collection("col-other", &["bm-enter".to_string()]).expect("populate");
+        layout.update_tours_collections();
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        press(&mut layout, KeyCode::Enter);
+        assert!(!layout.right_pane.overview_active, "entered the first collection");
+        render_at(&layout, 80, 30);
+        layout.next_focus(); // preview -> details
+        layout.next_focus(); // -> search
+
+        // Something (e.g. a tag filter) moves the list selection meanwhile.
+        let panel = layout.left_pane.content_panel.active_panel_mut().expect("collections");
+        let current = panel.selected_index().expect("a selection");
+        panel.set_selected(if current == 0 { 1 } else { 0 });
+        let moved_to = layout.content_selection();
+
+        for _ in 0..3 {
+            layout.next_focus(); // Repos, Tags, list
+            render_at(&layout, 80, 30);
+        }
+        assert_eq!(layout.focus, FocusArea::ContentPanel);
+        assert!(layout.right_pane.overview_active, "the preview follows the new selection");
+        assert_eq!(layout.previewed_selection, moved_to);
+    }
+
+    #[test]
+    fn stacked_tab_leaves_expanded_sections() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContextPanel);
+        layout.left_pane_size = LeftPaneSize::Half;
+        layout.left_pane.set_resize_mode(LeftPaneSize::Half);
+        render_at(&layout, 80, 30);
+
+        layout.previous_focus();
+        assert_eq!(layout.focus, FocusArea::Search);
+        assert_eq!(layout.left_pane_size, LeftPaneSize::Regular, "search is drawn again");
+        render_at(&layout, 80, 30);
+        assert!(!layout.left_pane.search.last_area().is_empty(), "focus lands on a drawn bar");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enter_on_a_collection_focuses_the_preview() {
+        use ratatui::crossterm::event::KeyCode;
+        for mode in [LayoutMode::Landscape, LayoutMode::Portrait] {
+            let mut layout = collection_layout(mode);
+            render_at(&layout, 120, 40);
+            press(&mut layout, KeyCode::Enter);
+            assert_eq!(layout.focus, FocusArea::Main, "{mode:?}");
+            assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps, "{mode:?}: the preview");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enter_on_a_collection_focuses_the_preview_after_reading_details() {
+        use ratatui::crossterm::event::KeyCode;
+        for mode in [LayoutMode::Landscape, LayoutMode::Portrait] {
+            let mut layout = collection_layout(mode);
+            render_at(&layout, 120, 40);
+            // Enter a collection, read its details, then go back to the list.
+            press(&mut layout, KeyCode::Enter);
+            render_at(&layout, 120, 40);
+            press(&mut layout, KeyCode::Char('5'));
+            assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "{mode:?}");
+            press(&mut layout, KeyCode::Char('3'));
+            render_at(&layout, 120, 40);
+
+            press(&mut layout, KeyCode::Enter);
+            assert_eq!(layout.focus, FocusArea::Main, "{mode:?}");
+            assert_eq!(
+                layout.right_pane.focused,
+                RightPaneFocus::Steps,
+                "{mode:?}: Enter lands on the preview, not the details read last",
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enter_on_a_bookmark_focuses_the_preview_after_reading_details() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = content_layout(LayoutMode::Landscape, ContentTab::Bookmarks);
+        render_at(&layout, 120, 40);
+        press(&mut layout, KeyCode::Char('5'));
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        press(&mut layout, KeyCode::Char('3'));
+
+        press(&mut layout, KeyCode::Enter);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
     }
 
     #[test]

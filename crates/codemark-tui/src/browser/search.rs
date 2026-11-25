@@ -93,10 +93,27 @@ impl SearchBar {
         }
         let row = Rect { height: 1, ..area };
         self.last_area.set(row);
-        let style = Style::default().fg(crate::theme::palette().dim);
+        let palette = crate::theme::palette();
+        let style = Style::default().fg(if self.error_message.is_some() {
+            palette.error
+        } else {
+            palette.dim
+        });
         buf.set_string(row.left(), row.y, "╶", style);
         buf.set_string(row.right() - 1, row.y, "╴", style);
         let inner = Rect { x: row.x + 1, width: row.width.saturating_sub(2), ..row };
+        // The framed bar shows a failed search's error below it; collapsed
+        // there's no room, so the error takes the row (in its error colour)
+        // rather than leaving stale results with no cue that the search failed.
+        if let Some(ref error) = self.error_message {
+            let error_style = Style::default().fg(palette.error);
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ! ", error_style.add_modifier(Modifier::BOLD)),
+                Span::styled(error.as_str(), error_style),
+            ]))
+            .render(inner, buf);
+            return;
+        }
         self.render_content(inner, buf);
     }
 
@@ -452,6 +469,17 @@ impl Component for SearchBar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn collapsed_bar_shows_a_search_error() {
+        let mut bar = SearchBar::new();
+        bar.set_error("index unavailable");
+        let area = Rect::new(0, 0, 60, 1);
+        let mut buf = Buffer::empty(area);
+        bar.render_collapsed(area, &mut buf);
+        let row: String = (0..60).map(|x| buf[(x, 0)].symbol().to_string()).collect();
+        assert!(row.contains("index unavailable"), "error shown on the collapsed row: {row}");
+    }
 
     #[test]
     fn test_search_bar_creation() {
