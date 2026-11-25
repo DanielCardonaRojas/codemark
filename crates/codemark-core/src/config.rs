@@ -196,6 +196,15 @@ pub struct TuiConfig {
     /// shipped default config sets `["collections", "bookmarks", "tours"]`, so
     /// fresh installs open on Collections. See [`ContentTabName`].
     pub content_tab_order: Option<Vec<String>>,
+
+    /// Pane arrangement: `"auto"` (default), `"portrait"` or `"landscape"`.
+    ///
+    /// Landscape puts the lists column beside the preview column; portrait
+    /// stacks the lists above the preview and squashes every unfocused
+    /// section to a one-line title bar, for narrow terminal splits. `auto`
+    /// picks portrait when the terminal is narrower than 100 columns and at
+    /// least 24 rows tall. Unknown values fall back to `auto`.
+    pub layout: Option<String>,
 }
 
 /// A Content panel tab, used to configure tab order independently of the TUI.
@@ -843,6 +852,9 @@ impl Config {
         if other.tui.content_tab_order.is_some() {
             self.tui.content_tab_order = other.tui.content_tab_order;
         }
+        if other.tui.layout.is_some() {
+            self.tui.layout = other.tui.layout;
+        }
 
         // Grammars config - override only if explicitly set in local, so a repo
         // can point at an internal or air-gapped registry.
@@ -1052,6 +1064,17 @@ theme = "Dracula"
         let local = Config::default();
         global.merge(local);
         assert_eq!(global.tui.theme.as_deref(), Some("Nord"));
+    }
+
+    #[test]
+    fn merge_overrides_tui_layout_and_keeps_it_when_local_unset() {
+        let mut global: Config = toml::from_str("[tui]\nlayout = \"landscape\"\n").unwrap();
+        let local: Config = toml::from_str("[tui]\nlayout = \"portrait\"\n").unwrap();
+        global.merge(local);
+        assert_eq!(global.tui.layout.as_deref(), Some("portrait"));
+
+        global.merge(Config::default());
+        assert_eq!(global.tui.layout.as_deref(), Some("portrait"));
     }
 
     #[test]

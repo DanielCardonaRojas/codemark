@@ -9,6 +9,31 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
 };
 
+/// Rows taken by the search bar.
+const SEARCH_ROWS: u16 = 3;
+
+/// Rows the Content list needs before the Context/Filters panels give up
+/// their regular heights and squash to title bars.
+const MIN_CONTENT_ROWS: u16 = 10;
+
+/// Rows the active section gets in the stacked (portrait) layout.
+///
+/// Fixed, and the same for Context, Filters and Content: when the active
+/// section instead filled the lists column, each one came out a different
+/// height and the column itself grew when focus reached Context or Filters, so
+/// moving focus made the whole stack jump. The frame plus eight list rows.
+pub const STACKED_SECTION_ROWS: u16 = 10;
+
+/// Render `panel` expanded, or as its title bar when only one row was laid
+/// out for it.
+fn render_section(panel: &TabbedPanel, area: Rect, buf: &mut Buffer) {
+    if area.height < 3 {
+        panel.render_collapsed(area, buf);
+    } else {
+        panel.render(area, buf);
+    }
+}
+
 /// Left sidebar containing search and three tabbed panels.
 pub struct LeftPane {
     /// Search bar component
@@ -86,6 +111,13 @@ impl LeftPane {
 
     /// Render the left pane.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.render_with(area, buf, false);
+    }
+
+    /// Render the left pane, squashing the unfocused Context/Filters panels
+    /// to one-line title bars when `force_squash` (the portrait layout) or
+    /// when the pane is too short to give them their regular heights.
+    pub fn render_with(&self, area: Rect, buf: &mut Buffer, force_squash: bool) {
         // Invalidate every child's cached hit-test area up front; each panel
         // re-records its area when (and only when) it is rendered below. When
         // expanded (Half/Full) only the focused panel is drawn, so this keeps a
@@ -119,19 +151,36 @@ impl LeftPane {
                     }
                     _ => {
                         // Fallback: render everything normally
-                        self.render_all(area, buf);
+                        self.render_all(area, buf, force_squash);
                     }
                 }
             }
             LeftPaneSize::Regular => {
-                // Render all panels normally
-                self.render_all(area, buf);
+                self.render_all(area, buf, force_squash);
             }
         }
     }
 
     /// Render all panels in the left pane (regular mode).
-    fn render_all(&self, area: Rect, buf: &mut Buffer) {
+    ///
+    /// When `force_squash` (the portrait layout) or when the pane can't fit
+    /// every section at its regular height, the pane squashes like lazygit's
+    /// side panels: the active section (the last focused of Context, Filters
+    /// and Content; Content while the preview has focus) fills the pane and
+    /// the others collapse to one-line title bars, as does the search bar
+    /// while it isn't focused.
+    fn render_all(&self, area: Rect, buf: &mut Buffer, force_squash: bool) {
+        let regular_height =
+            SEARCH_ROWS + self.context_config.min + self.filters_config.min + MIN_CONTENT_ROWS;
+        if force_squash {
+            self.render_squashed(area, buf, Some(STACKED_SECTION_ROWS));
+            return;
+        }
+        if area.height < regular_height {
+            self.render_squashed(area, buf, None);
+            return;
+        }
+
         // Calculate heights based on focus
         let p1_height = if self.context_panel.focused {
             self.context_config.max
@@ -149,24 +198,73 @@ impl LeftPane {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),         // Search bar
-                Constraint::Length(p1_height), // Context panel (Repos/Accounts)
-                Constraint::Length(p2_height), // Filters panel (Tags/Branches)
-                Constraint::Min(0),            // Content panel (Tours/Collections/Bookmarks)
+                Constraint::Length(SEARCH_ROWS), // Search bar
+                Constraint::Length(p1_height),   // Context panel (Repos/Accounts)
+                Constraint::Length(p2_height),   // Filters panel (Tags/Branches)
+                Constraint::Min(0),              // Content panel (Tours/Collections/Bookmarks)
             ])
             .split(area);
 
-        // Render search
         self.search.render(chunks[0], buf);
-
-        // Render the context panel
         self.context_panel.render(chunks[1], buf);
-
-        // Render the filters panel
         self.filters_panel.render(chunks[2], buf);
-
-        // Render the content panel
         self.content_panel.render(chunks[3], buf);
+    }
+
+    /// Height of the lists column in the stacked (portrait) layout: the search
+    /// bar, the active section at [`STACKED_SECTION_ROWS`], and a title bar for
+    /// each of the other two sections.
+    pub fn stacked_height(&self) -> u16 {
+        self.search_rows_squashed() + STACKED_SECTION_ROWS + 2
+    }
+
+    /// The search bar's height in the squashed layout: a title bar unless it
+    /// has focus.
+    fn search_rows_squashed(&self) -> u16 {
+        if self.search.is_focused() { SEARCH_ROWS } else { 1 }
+    }
+
+    /// The squashed layout of [`Self::render_all`].
+    ///
+    /// `active_rows` fixes the active section's height (the portrait layout);
+    /// `None` lets it fill the pane, for a landscape pane too short to fit
+    /// every section, where the column is the full terminal height.
+    fn render_squashed(&self, area: Rect, buf: &mut Buffer, active_rows: Option<u16>) {
+        // The search bar drives the Content list, so typing a query shows it.
+        let active = match self.last_resizable_focus {
+            _ if self.search.is_focused() => FocusArea::ContentPanel,
+            FocusArea::ContextPanel => FocusArea::ContextPanel,
+            FocusArea::FiltersPanel => FocusArea::FiltersPanel,
+            _ => FocusArea::ContentPanel,
+        };
+        let height = |section: FocusArea| match (section == active, active_rows) {
+            (true, Some(rows)) => Constraint::Length(rows),
+            (true, None) => Constraint::Min(0),
+            (false, _) => Constraint::Length(1),
+        };
+        let search_rows = self.search_rows_squashed();
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(search_rows),
+                height(FocusArea::ContextPanel),
+                height(FocusArea::FiltersPanel),
+                height(FocusArea::ContentPanel),
+                // With a fixed active height, absorbs any spare rows so they
+                // never stretch a title bar. Otherwise the active section is
+                // the one filling the pane, so this must take nothing.
+                if active_rows.is_some() { Constraint::Min(0) } else { Constraint::Length(0) },
+            ])
+            .split(area);
+
+        if search_rows < SEARCH_ROWS {
+            self.search.render_collapsed(chunks[0], buf);
+        } else {
+            self.search.render(chunks[0], buf);
+        }
+        render_section(&self.context_panel, chunks[1], buf);
+        render_section(&self.filters_panel, chunks[2], buf);
+        render_section(&self.content_panel, chunks[3], buf);
     }
 
     /// Handle an event.

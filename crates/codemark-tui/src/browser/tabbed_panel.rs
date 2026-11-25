@@ -807,6 +807,89 @@ impl TabbedPanel {
         self.render_list_indicator(area, buf);
     }
 
+    /// Render the panel squashed to a single title row, lazygit-style:
+    /// `╶─Tags──────── 1 of 141 ─[2]─╴`. The tabs, sort glyph and pane-number
+    /// badge stay on it, so a click on a tab or the bar still works (the layout
+    /// focuses the panel and expands it), but the body isn't drawn and the
+    /// nested panel receives no mouse input (see [`Self::is_collapsed`]).
+    pub fn render_collapsed(&self, area: Rect, buf: &mut Buffer) {
+        use unicode_width::UnicodeWidthStr;
+        if area.is_empty() {
+            self.invalidate_area();
+            return;
+        }
+        let row = Rect { height: 1, ..area };
+
+        // Draw the regular frame into a 3-row scratch buffer and keep its top
+        // line, so the tab titles, badge and health label match the expanded
+        // panel exactly (and the tab click ranges recorded while rendering it
+        // stay valid: only the height differs).
+        let scratch_area = Rect { height: 3, ..row };
+        let mut scratch = Buffer::empty(scratch_area);
+        self.render_frame(scratch_area, &mut scratch);
+        self.last_area.set(row);
+        for x in row.left()..row.right() {
+            if let Some(cell) = buf.cell_mut((x, row.y)) {
+                *cell = scratch[(x, row.y)].clone();
+            }
+        }
+
+        let border_color =
+            if self.focused { crate::theme::palette().accent } else { crate::theme::palette().dim };
+        let border_style = Style::default().fg(border_color);
+        for (x, glyph) in [(row.left(), '╶'), (row.right() - 1, '╴')] {
+            if let Some(cell) = buf.cell_mut((x, row.y)) {
+                cell.set_char(glyph);
+                cell.set_style(border_style);
+            }
+        }
+
+        // The `n of m` indicator normally sits on the bottom border, which a
+        // collapsed panel doesn't have: draw it on the title row, left of the
+        // badge region, when it fits after the (possibly truncated) title.
+        let active_index = self.tabs.selected_index();
+        let Some(TabContent::List(panel)) = self.panels.get(active_index) else {
+            return;
+        };
+        if panel.is_empty() {
+            return;
+        }
+        let current = panel.selected_index().map_or(0, |i| i + 1);
+        let indicator = format!(" {current} of {} ", panel.len());
+        let indicator_width = indicator.width() as u16;
+        let reserved = self.pane_number.map_or(1, |number| {
+            crate::browser::tabs::top_border_reserved_width_full(
+                number,
+                self.active_sort_method().is_some(),
+                self.health_label.get(),
+            )
+        });
+        let indicator_end = row.right().saturating_sub(reserved + 1);
+        let indicator_x = indicator_end.saturating_sub(indicator_width + 1);
+        // Rightmost title cell: the last non-border glyph before the badge region.
+        let title_end = (row.left() + 1..indicator_end)
+            .rev()
+            .find(|&x| buf[(x, row.y)].symbol() != "─")
+            .unwrap_or(row.left());
+        if indicator_x <= title_end + 1 {
+            return;
+        }
+        buf.set_string(
+            indicator_x,
+            row.y,
+            &indicator,
+            Style::default().fg(crate::theme::palette().dim),
+        );
+    }
+
+    /// Whether the last render squashed this panel to its title row
+    /// ([`Self::render_collapsed`]). Its body isn't on screen, so mouse input
+    /// must not reach the nested panel through that panel's stale area.
+    pub fn is_collapsed(&self) -> bool {
+        let area = self.last_area.get();
+        !area.is_empty() && area.height < 3
+    }
+
     /// Render the panel's frame and tabs, then let `body` draw the inside in
     /// place of the active tab's content.
     pub fn render_with_body(
@@ -1085,6 +1168,8 @@ impl TabbedPanel {
         // consumed the event, so don't also forward it to the nested panel.
         let handled = if tab_changed || sort_cycled {
             true
+        } else if matches!(event, Event::Mouse(_)) && self.is_collapsed() {
+            false
         } else if let Some(panel) = self.panels.get_mut(active_index) {
             panel.handle_event(event)
         } else {

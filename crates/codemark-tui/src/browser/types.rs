@@ -167,6 +167,47 @@ impl FocusArea {
     }
 }
 
+/// How the browser arranges its two columns, from `[tui].layout`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    /// Portrait on a narrow, tall-enough terminal; landscape otherwise.
+    #[default]
+    Auto,
+    /// Always stack the lists column above the preview column.
+    Portrait,
+    /// Always put the lists column beside the preview column.
+    Landscape,
+}
+
+impl LayoutMode {
+    /// `auto` turns portrait below this width...
+    const AUTO_PORTRAIT_MAX_WIDTH: u16 = 99;
+    /// ...when there are at least this many rows to stack the columns in.
+    /// Measured on the browser area, which excludes the status bar row, so
+    /// this is a 24-row terminal.
+    const AUTO_PORTRAIT_MIN_HEIGHT: u16 = 23;
+
+    /// Parse the config value; unset or unknown values mean [`Self::Auto`].
+    pub fn from_config(value: Option<&str>) -> Self {
+        match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("portrait") => Self::Portrait,
+            Some("landscape") => Self::Landscape,
+            _ => Self::Auto,
+        }
+    }
+
+    /// Whether a `width` x `height` browser area is laid out in portrait.
+    pub fn is_portrait(self, width: u16, height: u16) -> bool {
+        match self {
+            Self::Portrait => true,
+            Self::Landscape => false,
+            Self::Auto => {
+                width <= Self::AUTO_PORTRAIT_MAX_WIDTH && height >= Self::AUTO_PORTRAIT_MIN_HEIGHT
+            }
+        }
+    }
+}
+
 /// Size mode for the left pane, similar to lazy git's panel sizing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LeftPaneSize {
@@ -326,6 +367,22 @@ impl DetailsPaneSize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn layout_mode_parses_config_and_resolves_auto() {
+        assert_eq!(LayoutMode::from_config(None), LayoutMode::Auto);
+        assert_eq!(LayoutMode::from_config(Some(" Portrait ")), LayoutMode::Portrait);
+        assert_eq!(LayoutMode::from_config(Some("landscape")), LayoutMode::Landscape);
+        assert_eq!(LayoutMode::from_config(Some("sideways")), LayoutMode::Auto);
+
+        assert!(LayoutMode::Auto.is_portrait(80, 40), "narrow and tall");
+        assert!(LayoutMode::Auto.is_portrait(80, 23), "an 80x24 terminal minus the status bar");
+        assert!(!LayoutMode::Auto.is_portrait(80, 22));
+        assert!(!LayoutMode::Auto.is_portrait(80, 20), "narrow but too short to stack");
+        assert!(!LayoutMode::Auto.is_portrait(160, 40), "wide");
+        assert!(LayoutMode::Portrait.is_portrait(200, 10));
+        assert!(!LayoutMode::Landscape.is_portrait(60, 60));
+    }
 
     #[test]
     fn test_left_pane_size_increase() {

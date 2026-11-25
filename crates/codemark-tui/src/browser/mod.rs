@@ -28,8 +28,9 @@ pub use tabs::{ContentTab, ContentTabOrder, ContextTab, FiltersTab, Tab, TabSele
 pub use transfer::{BranchPicker, TransferKind, TransferPlanned};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
-    HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
-    SpinningItem, StepData, StepLiveUpdate, StepPreviewMarkdown, TabContent, escape_markdown,
+    HealNotification, HealTarget, LayoutMode, LeftPaneSize, PreviewPayload, RightPaneSize,
+    SectionConfig, SpinningItem, StepData, StepLiveUpdate, StepPreviewMarkdown, TabContent,
+    escape_markdown,
 };
 pub use workspace::RepoWorkspace;
 
@@ -167,6 +168,15 @@ pub struct BrowserLayout {
     right_pane_size: RightPaneSize,
     /// Current size mode for the details pane
     details_pane_size: DetailsPaneSize,
+    /// Column arrangement from `[tui].layout`; resolved against the frame
+    /// size on every render (see [`LayoutMode::is_portrait`]).
+    layout_mode: LayoutMode,
+    /// Whether the last frame stacked both columns into one (portrait with
+    /// both visible), where Tab walks every section linearly. Set by render.
+    stacked: std::cell::Cell<bool>,
+    /// The Content selection the preview was last loaded for, so the stacked
+    /// Tab cycle re-previews the list only when its selection has changed.
+    previewed_selection: Option<(ContentTab, String)>,
     /// Whether a tour pull is in progress (for post-pull panel rebuild)
     is_pulling_tour: bool,
     /// Remote tour ids with a pull task currently in flight. The dedup guard for
@@ -352,11 +362,10 @@ impl BrowserLayout {
         // Content panel tab layout comes from `[tui].content_tab_order`. Resolved once at
         // construction: reordering tabs mid-session would invalidate the panel
         // positions held by in-flight search/reconcile requests.
-        let tab_order = db
-            .path()
-            .parent()
-            .map(|dir| ContentTabOrder::from_config(&Config::load_layered(dir).tui))
-            .unwrap_or_default();
+        let tui_config = db.path().parent().map(|dir| Config::load_layered(dir).tui);
+        let tab_order = tui_config.as_ref().map(ContentTabOrder::from_config).unwrap_or_default();
+        let layout_mode =
+            LayoutMode::from_config(tui_config.as_ref().and_then(|tui| tui.layout.as_deref()));
 
         let left_pane = LeftPane::new(&db, &registry, &tab_order);
         let right_pane = RightPane::new(&db);
@@ -389,6 +398,9 @@ impl BrowserLayout {
             left_pane_size: LeftPaneSize::Regular,
             right_pane_size: RightPaneSize::Regular,
             details_pane_size: DetailsPaneSize::Regular,
+            layout_mode,
+            stacked: std::cell::Cell::new(false),
+            previewed_selection: None,
             is_pulling_tour: false,
             pulling_tour_ids: std::collections::HashSet::new(),
             spinning_items: Vec::new(),
@@ -629,7 +641,20 @@ impl BrowserLayout {
     /// Synchronous: used for focus-enter / tab-change previews where an instant,
     /// fully-rendered pane is expected (and exercised by the e2e snapshots). The
     /// hot scrolling path uses [`on_content_selection_changed`] instead.
+    /// The Content list's active tab and selected item, if any.
+    fn content_selection(&self) -> Option<(ContentTab, String)> {
+        let tab = self.active_content_tab()?;
+        let id = self
+            .left_pane
+            .content_panel
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .and_then(|selected| selected.user_data.clone())?;
+        Some((tab, id))
+    }
+
     pub(super) fn preview_content_item(&mut self, tab: ContentTab, id: &str) {
+        self.previewed_selection = Some((tab, id.to_string()));
         match tab {
             ContentTab::Bookmarks => {
                 // Resolve from the selected row's owning repo (owned copy before
@@ -684,6 +709,7 @@ impl BrowserLayout {
     /// [`request_bookmark_preview`](Self::request_bookmark_preview). Collections
     /// are cheap (no parse) and stay synchronous.
     pub(super) fn on_content_selection_changed(&mut self, tab: ContentTab, id: &str) {
+        self.previewed_selection = Some((tab, id.to_string()));
         match tab {
             ContentTab::Bookmarks => self.request_bookmark_preview(id),
             ContentTab::Collections => {
@@ -708,6 +734,7 @@ impl BrowserLayout {
     /// (see [`maybe_spawn_pending_preview`]), so a fast scroll through many items
     /// resolves only the final one.
     fn request_bookmark_preview(&mut self, id: &str) {
+        self.previewed_selection = Some((ContentTab::Bookmarks, id.to_string()));
         // Re-entering the same already-loaded bookmark needs no work.
         if !self.right_pane.is_loading()
             && self.inflight_preview.is_none()
@@ -761,6 +788,7 @@ impl BrowserLayout {
     /// loading indicator shows right away (replacing any overview from the tab we
     /// left) so the pane doesn't linger on stale content while the resolve runs.
     fn request_bookmark_preview_now(&mut self, id: &str) {
+        self.previewed_selection = Some((ContentTab::Bookmarks, id.to_string()));
         // Bump the request id so any in-flight/older result is treated as stale,
         // and drop any queued debounced request for a prior selection.
         self.preview_seq = self.preview_seq.wrapping_add(1);
@@ -3066,8 +3094,74 @@ impl BrowserLayout {
         }
     }
 
+    /// The sections of the stacked (portrait) layout in Tab order, top to
+    /// bottom: the lists column, then the preview and, unless it's hidden
+    /// (a collection overview has no details), the details pane under it.
+    fn stacked_focus_cycle(&self) -> Vec<(FocusArea, RightPaneFocus)> {
+        let mut cycle: Vec<(FocusArea, RightPaneFocus)> = [
+            FocusArea::Search,
+            FocusArea::ContextPanel,
+            FocusArea::FiltersPanel,
+            FocusArea::ContentPanel,
+        ]
+        .into_iter()
+        .map(|area| (area, RightPaneFocus::Steps))
+        .collect();
+        cycle.push((FocusArea::Main, RightPaneFocus::Steps));
+        if !self.right_pane.overview_active {
+            cycle.push((FocusArea::Main, RightPaneFocus::Details));
+        }
+        cycle
+    }
+
+    /// Tab in the stacked layout: move linearly through every section of the
+    /// single column, crossing between the lists and the preview, instead of
+    /// cycling within the current column. Returns `false` when the last frame
+    /// wasn't stacked, leaving Tab to its per-column behaviour.
+    fn cycle_stacked_focus(&mut self, forward: bool) -> bool {
+        if !self.stacked.get() {
+            return false;
+        }
+        let cycle = self.stacked_focus_cycle();
+        let current = cycle.iter().position(|&(area, right)| {
+            area == self.focus && (area != FocusArea::Main || right == self.right_pane.focused)
+        });
+        let len = cycle.len();
+        let next = match current {
+            Some(i) if forward => (i + 1) % len,
+            Some(i) => (i + len - 1) % len,
+            None => 0,
+        };
+        let (area, right) = cycle[next];
+        // Walking the column leaves any `+`-expanded section: an expanded
+        // panel or details pane hides the others, and Tab must not land on a
+        // section that isn't drawn.
+        self.left_pane_size = LeftPaneSize::Regular;
+        self.left_pane.set_resize_mode(LeftPaneSize::Regular);
+        self.details_pane_size = DetailsPaneSize::Regular;
+        self.focus = area;
+        if area == FocusArea::Main {
+            match right {
+                RightPaneFocus::Details => self.right_pane.focus_details(),
+                _ => self.right_pane.focus_steps(),
+            }
+        }
+        tracing::debug!(target: "codemark::ui", focus = ?self.focus, forward, "stacked focus cycle");
+        // Reaching the list re-previews its selection only if the preview is
+        // for a different item (say a tag filter, applied while away, moved
+        // the selection). Re-previewing the same item would swap an entered
+        // collection's steps back to its overview just for walking the column.
+        let refresh =
+            area == FocusArea::ContentPanel && self.content_selection() != self.previewed_selection;
+        self.update_focus_state_with(refresh);
+        true
+    }
+
     /// Cycle to the next focusable area within the current pane.
     pub fn next_focus(&mut self) {
+        if self.cycle_stacked_focus(true) {
+            return;
+        }
         match self.focus {
             FocusArea::Main => {
                 self.right_pane.cycle_internal_focus(true);
@@ -3086,6 +3180,9 @@ impl BrowserLayout {
 
     /// Cycle to the previous focusable area within the current pane.
     pub fn previous_focus(&mut self) {
+        if self.cycle_stacked_focus(false) {
+            return;
+        }
         match self.focus {
             FocusArea::Main => {
                 self.right_pane.cycle_internal_focus(false);
@@ -3203,41 +3300,57 @@ enum RenderMode {
 impl BrowserLayout {
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let (left_constraints, render_mode) =
-            if self.right_pane_size.is_fullscreen() || self.details_pane_size.is_fullscreen() {
-                // Right pane (or details) takes full width
-                (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
+        // Portrait stacks the lists column above the preview column instead of
+        // beside it (lazygit's portrait mode), and squashes every unfocused
+        // section to a title bar so each column shows one expanded section.
+        let portrait = self.layout_mode.is_portrait(area.width, area.height);
+        let (left_constraints, render_mode) = if self.right_pane_size.is_fullscreen()
+            || self.details_pane_size.is_fullscreen()
+        {
+            // Right pane (or details) takes full width
+            (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
+        } else {
+            // Use left pane size to determine layout
+            let left_percent = self.left_pane_size.left_width_percent();
+            if portrait && self.left_pane_size == LeftPaneSize::Regular {
+                // Stacked, the lists column is sized to its content: the
+                // expanded section gets the standard height whichever of
+                // Repos, Tags or Content it is, so the preview below doesn't
+                // jump as focus moves; the preview takes the rest.
+                (
+                    vec![Constraint::Length(self.left_pane.stacked_height()), Constraint::Min(0)],
+                    RenderMode::Both,
+                )
+            } else if let Some(right_percent) = self.left_pane_size.right_width_percent() {
+                // Both panes visible
+                (
+                    vec![
+                        Constraint::Percentage(left_percent),
+                        Constraint::Percentage(right_percent),
+                    ],
+                    RenderMode::Both,
+                )
             } else {
-                // Use left pane size to determine layout
-                let left_percent = self.left_pane_size.left_width_percent();
-                if let Some(right_percent) = self.left_pane_size.right_width_percent() {
-                    // Both panes visible
-                    (
-                        vec![
-                            Constraint::Percentage(left_percent),
-                            Constraint::Percentage(right_percent),
-                        ],
-                        RenderMode::Both,
-                    )
-                } else {
-                    // Only left pane visible (right hidden)
-                    (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
-                }
-            };
+                // Only left pane visible (right hidden)
+                (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
+            }
+        };
 
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(if portrait { Direction::Vertical } else { Direction::Horizontal })
             .constraints(left_constraints)
             .split(area);
 
+        self.stacked.set(portrait && matches!(render_mode, RenderMode::Both));
         match render_mode {
             RenderMode::Both => {
-                self.left_pane.render(chunks[0], buf);
-                self.right_pane.render(
+                self.left_pane.render_with(chunks[0], buf, portrait);
+                self.right_pane.render_with(
                     chunks[1],
                     buf,
                     RightPaneSize::Regular,
                     self.details_pane_size,
+                    portrait,
                 );
             }
             RenderMode::LeftOnly => {
@@ -3293,6 +3406,8 @@ mod tests {
     use super::*;
     use crate::event::{EventHandler, EventHandlerConfig};
     use codemark_core::storage::db::Database;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
 
     fn test_layout() -> BrowserLayout {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3439,6 +3554,360 @@ mod tests {
         layout.set_focus(FocusArea::ContentPanel);
         assert_eq!(layout.right_pane_size, RightPaneSize::Regular);
         assert_eq!(layout.details_pane_size, DetailsPaneSize::Regular);
+    }
+
+    /// Render `layout` into a fresh `width` x `height` buffer.
+    fn render_at(layout: &BrowserLayout, width: u16, height: u16) {
+        let area = Rect::new(0, 0, width, height);
+        layout.render(area, &mut Buffer::empty(area));
+    }
+
+    #[test]
+    fn portrait_stacks_lists_above_preview_and_squashes_sections() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        let content = layout.left_pane.content_panel.last_area();
+        let right = layout.right_pane.last_area();
+        assert_eq!(right.width, 80, "the preview column takes the full width");
+        assert!(content.bottom() <= right.y, "lists sit above the preview: {content:?} {right:?}");
+        assert_eq!(layout.left_pane.search.last_area().height, 1, "unfocused search squashes");
+        assert_eq!(layout.left_pane.context_panel.last_area().height, 1);
+        assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
+        assert!(content.height >= 3, "the active Content list stays expanded");
+    }
+
+    #[test]
+    fn portrait_expands_the_focused_left_section_only() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContextPanel);
+        render_at(&layout, 80, 30);
+
+        assert!(layout.left_pane.context_panel.last_area().height >= 3);
+        assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
+        assert_eq!(layout.left_pane.content_panel.last_area().height, 1);
+        assert!(layout.left_pane.content_panel.is_collapsed());
+    }
+
+    #[test]
+    fn stacked_sections_share_the_standard_height() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        for focus in [FocusArea::ContextPanel, FocusArea::FiltersPanel, FocusArea::ContentPanel] {
+            layout.set_focus(focus);
+            render_at(&layout, 80, 40);
+            let expanded = [
+                layout.left_pane.context_panel.last_area(),
+                layout.left_pane.filters_panel.last_area(),
+                layout.left_pane.content_panel.last_area(),
+            ]
+            .into_iter()
+            .map(|area| area.height)
+            .max();
+            assert_eq!(expanded, Some(left_pane::STACKED_SECTION_ROWS), "{focus:?} expanded");
+            assert_eq!(
+                layout.right_pane.last_area().y,
+                1 + left_pane::STACKED_SECTION_ROWS + 2,
+                "{focus:?}: the preview starts at the same row",
+            );
+        }
+    }
+
+    #[test]
+    fn tab_walks_the_stacked_column_top_to_bottom() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Search, "wraps to the top of the column");
+
+        layout.previous_focus();
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        layout.previous_focus();
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+        layout.previous_focus();
+        assert_eq!(layout.focus, FocusArea::ContentPanel, "Shift+Tab climbs back up");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stacked_tab_back_to_the_list_keeps_the_entered_collection() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let root = seeded_repo(
+            "bm-stack",
+            "fn stack",
+            "src/s.rs",
+            "fn stack() -> u8 { 1 }\n",
+            "col-stack",
+            "StackTour",
+        );
+        let db = Database::open(&root.join(".codemark").join("codemark.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        let mut layout = BrowserLayout::new(db, handler);
+        layout.layout_mode = LayoutMode::Portrait;
+        let collections_pos = layout.tab_position(ContentTab::Collections);
+        layout.left_pane.content_panel.tabs.set_selected(collections_pos);
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+        assert!(layout.right_pane.overview_active, "the list shows the collection overview");
+
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(!layout.right_pane.overview_active, "Enter shows the collection's steps");
+        let steps = layout.right_pane.steps_data.len();
+        assert!(steps > 0, "the entered collection has steps");
+
+        // Walk the whole column back round to the list without moving the selection.
+        render_at(&layout, 80, 30);
+        layout.set_focus(FocusArea::Main);
+        // Preview -> details -> search -> Repos -> Tags -> list.
+        for _ in 0..5 {
+            layout.next_focus();
+            render_at(&layout, 80, 30);
+        }
+        assert_eq!(layout.focus, FocusArea::ContentPanel);
+        assert!(!layout.right_pane.overview_active, "returning to the list keeps the steps");
+        assert_eq!(layout.right_pane.steps_data.len(), steps);
+        assert_eq!(layout.right_pane.details.last_area().height, 1, "details bar still shown");
+    }
+
+    /// A single-repo layout seeded with one collection (one step), its
+    /// Collections tab selected and the Content panel focused.
+    fn collection_layout(mode: LayoutMode) -> BrowserLayout {
+        content_layout(mode, ContentTab::Collections)
+    }
+
+    /// [`collection_layout`] with the `tab` Content tab selected instead.
+    fn content_layout(mode: LayoutMode, tab: ContentTab) -> BrowserLayout {
+        let root = seeded_repo(
+            "bm-enter",
+            "fn enter",
+            "src/e.rs",
+            "fn enter() -> u8 { 1 }\n",
+            "col-enter",
+            "EnterTour",
+        );
+        let db = Database::open(&root.join(".codemark").join("codemark.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        let mut layout = BrowserLayout::new(db, handler);
+        layout.layout_mode = mode;
+        let tab_pos = layout.tab_position(tab);
+        layout.left_pane.content_panel.tabs.set_selected(tab_pos);
+        layout.set_focus(FocusArea::ContentPanel);
+        layout
+    }
+
+    fn press(layout: &mut BrowserLayout, code: ratatui::crossterm::event::KeyCode) {
+        use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
+        layout.handle_event(&crate::event::Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stacked_tab_round_the_column_keeps_a_navigated_to_collection_entered() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Portrait);
+        let db = layout.workspace.focus_db();
+        db.insert_collection(&e2e_collection("col-other", "OtherTour")).expect("seed collection");
+        db.add_to_collection("col-other", &["bm-enter".to_string()]).expect("populate");
+        layout.update_tours_collections();
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        // Navigate to a collection with the keyboard, then enter it.
+        press(&mut layout, KeyCode::Char('j'));
+        render_at(&layout, 80, 30);
+        press(&mut layout, KeyCode::Enter);
+        assert!(!layout.right_pane.overview_active, "Enter shows the collection's steps");
+
+        // Walk the whole column twice, rendering every frame as the app does.
+        for _ in 0..12 {
+            press(&mut layout, KeyCode::Tab);
+            render_at(&layout, 80, 30);
+            assert!(!layout.right_pane.overview_active, "steps stay at {:?}", layout.focus);
+            assert!(!layout.right_pane.details.last_area().is_empty(), "details stay shown");
+        }
+        for _ in 0..3 {
+            press(&mut layout, KeyCode::BackTab);
+            render_at(&layout, 80, 30);
+            assert!(!layout.right_pane.overview_active, "steps stay at {:?}", layout.focus);
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stacked_tab_back_to_the_list_re_previews_a_changed_selection() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Portrait);
+        // A second collection, so the selection can move while focus is away.
+        let db = layout.workspace.focus_db();
+        db.insert_collection(&e2e_collection("col-other", "OtherTour")).expect("seed collection");
+        db.add_to_collection("col-other", &["bm-enter".to_string()]).expect("populate");
+        layout.update_tours_collections();
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        press(&mut layout, KeyCode::Enter);
+        assert!(!layout.right_pane.overview_active, "entered the first collection");
+        render_at(&layout, 80, 30);
+        layout.next_focus(); // preview -> details
+        layout.next_focus(); // -> search
+
+        // Something (e.g. a tag filter) moves the list selection meanwhile.
+        let panel = layout.left_pane.content_panel.active_panel_mut().expect("collections");
+        let current = panel.selected_index().expect("a selection");
+        panel.set_selected(if current == 0 { 1 } else { 0 });
+        let moved_to = layout.content_selection();
+
+        for _ in 0..3 {
+            layout.next_focus(); // Repos, Tags, list
+            render_at(&layout, 80, 30);
+        }
+        assert_eq!(layout.focus, FocusArea::ContentPanel);
+        assert!(layout.right_pane.overview_active, "the preview follows the new selection");
+        assert_eq!(layout.previewed_selection, moved_to);
+    }
+
+    #[test]
+    fn stacked_tab_leaves_expanded_sections() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContextPanel);
+        layout.left_pane_size = LeftPaneSize::Half;
+        layout.left_pane.set_resize_mode(LeftPaneSize::Half);
+        render_at(&layout, 80, 30);
+
+        layout.previous_focus();
+        assert_eq!(layout.focus, FocusArea::Search);
+        assert_eq!(layout.left_pane_size, LeftPaneSize::Regular, "search is drawn again");
+        render_at(&layout, 80, 30);
+        assert!(!layout.left_pane.search.last_area().is_empty(), "focus lands on a drawn bar");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enter_on_a_collection_focuses_the_preview() {
+        use ratatui::crossterm::event::KeyCode;
+        for mode in [LayoutMode::Landscape, LayoutMode::Portrait] {
+            let mut layout = collection_layout(mode);
+            render_at(&layout, 120, 40);
+            press(&mut layout, KeyCode::Enter);
+            assert_eq!(layout.focus, FocusArea::Main, "{mode:?}");
+            assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps, "{mode:?}: the preview");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enter_on_a_collection_focuses_the_preview_after_reading_details() {
+        use ratatui::crossterm::event::KeyCode;
+        for mode in [LayoutMode::Landscape, LayoutMode::Portrait] {
+            let mut layout = collection_layout(mode);
+            render_at(&layout, 120, 40);
+            // Enter a collection, read its details, then go back to the list.
+            press(&mut layout, KeyCode::Enter);
+            render_at(&layout, 120, 40);
+            press(&mut layout, KeyCode::Char('5'));
+            assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "{mode:?}");
+            press(&mut layout, KeyCode::Char('3'));
+            render_at(&layout, 120, 40);
+
+            press(&mut layout, KeyCode::Enter);
+            assert_eq!(layout.focus, FocusArea::Main, "{mode:?}");
+            assert_eq!(
+                layout.right_pane.focused,
+                RightPaneFocus::Steps,
+                "{mode:?}: Enter lands on the preview, not the details read last",
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn enter_on_a_bookmark_focuses_the_preview_after_reading_details() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = content_layout(LayoutMode::Landscape, ContentTab::Bookmarks);
+        render_at(&layout, 120, 40);
+        press(&mut layout, KeyCode::Char('5'));
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        press(&mut layout, KeyCode::Char('3'));
+
+        press(&mut layout, KeyCode::Enter);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+    }
+
+    #[test]
+    fn stacked_details_expand_below_a_visible_preview() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 40);
+        assert_eq!(layout.right_pane.details.last_area().height, 1, "a bar until focused");
+
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE)));
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "5 reaches the details");
+        render_at(&layout, 80, 40);
+        assert_eq!(
+            layout.right_pane.details.last_area().height,
+            left_pane::STACKED_SECTION_ROWS,
+            "focused details take the standard height",
+        );
+        assert!(!layout.right_pane.steps.is_collapsed(), "the preview stays expanded");
+
+        // Too short for both: the preview keeps a line of code, details give way.
+        render_at(&layout, 80, 24);
+        assert!(layout.right_pane.steps.last_area().height >= 3);
+        assert!(layout.right_pane.details.last_area().height >= 3);
+    }
+
+    #[test]
+    fn short_landscape_focused_details_collapse_the_preview() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Landscape;
+        layout.set_focus(FocusArea::Main);
+        render_at(&layout, 120, 24);
+        layout.right_pane.focus_details();
+        render_at(&layout, 120, 24);
+
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        assert!(layout.right_pane.steps.is_collapsed());
+        assert!(layout.right_pane.details.last_area().height >= 3);
+    }
+
+    #[test]
+    fn tab_stays_within_the_column_in_landscape() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Landscape;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 120, 40);
+
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Search, "wraps within the lists column");
+    }
+
+    #[test]
+    fn short_landscape_squashes_unfocused_sections() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Landscape;
+        layout.set_focus(FocusArea::ContentPanel);
+
+        render_at(&layout, 120, 40);
+        assert_eq!(layout.left_pane.context_panel.last_area().height, 7, "tall: regular heights");
+
+        render_at(&layout, 120, 20);
+        assert_eq!(layout.left_pane.context_panel.last_area().height, 1, "short: squashed");
+        assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
+        assert!(layout.left_pane.content_panel.last_area().height > 10);
     }
 
     #[test]
