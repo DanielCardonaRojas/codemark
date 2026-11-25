@@ -709,6 +709,7 @@ impl BrowserLayout {
     /// [`request_bookmark_preview`](Self::request_bookmark_preview). Collections
     /// are cheap (no parse) and stay synchronous.
     pub(super) fn on_content_selection_changed(&mut self, tab: ContentTab, id: &str) {
+        self.previewed_selection = Some((tab, id.to_string()));
         match tab {
             ContentTab::Bookmarks => self.request_bookmark_preview(id),
             ContentTab::Collections => {
@@ -3710,6 +3711,37 @@ mod tests {
     fn press(layout: &mut BrowserLayout, code: ratatui::crossterm::event::KeyCode) {
         use ratatui::crossterm::event::{KeyEvent, KeyModifiers};
         layout.handle_event(&crate::event::Event::Key(KeyEvent::new(code, KeyModifiers::NONE)));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stacked_tab_round_the_column_keeps_a_navigated_to_collection_entered() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Portrait);
+        let db = layout.workspace.focus_db();
+        db.insert_collection(&e2e_collection("col-other", "OtherTour")).expect("seed collection");
+        db.add_to_collection("col-other", &["bm-enter".to_string()]).expect("populate");
+        layout.update_tours_collections();
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        // Navigate to a collection with the keyboard, then enter it.
+        press(&mut layout, KeyCode::Char('j'));
+        render_at(&layout, 80, 30);
+        press(&mut layout, KeyCode::Enter);
+        assert!(!layout.right_pane.overview_active, "Enter shows the collection's steps");
+
+        // Walk the whole column twice, rendering every frame as the app does.
+        for _ in 0..12 {
+            press(&mut layout, KeyCode::Tab);
+            render_at(&layout, 80, 30);
+            assert!(!layout.right_pane.overview_active, "steps stay at {:?}", layout.focus);
+            assert!(!layout.right_pane.details.last_area().is_empty(), "details stay shown");
+        }
+        for _ in 0..3 {
+            press(&mut layout, KeyCode::BackTab);
+            render_at(&layout, 80, 30);
+            assert!(!layout.right_pane.overview_active, "steps stay at {:?}", layout.focus);
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
