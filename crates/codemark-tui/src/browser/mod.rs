@@ -28,8 +28,9 @@ pub use tabs::{ContentTab, ContentTabOrder, ContextTab, FiltersTab, Tab, TabSele
 pub use transfer::{BranchPicker, TransferKind, TransferPlanned};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
-    HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
-    SpinningItem, StepData, StepLiveUpdate, StepPreviewMarkdown, TabContent, escape_markdown,
+    HealNotification, HealTarget, LayoutMode, LeftPaneSize, PreviewPayload, RightPaneSize,
+    SectionConfig, SpinningItem, StepData, StepLiveUpdate, StepPreviewMarkdown, TabContent,
+    escape_markdown,
 };
 pub use workspace::RepoWorkspace;
 
@@ -167,6 +168,12 @@ pub struct BrowserLayout {
     right_pane_size: RightPaneSize,
     /// Current size mode for the details pane
     details_pane_size: DetailsPaneSize,
+    /// Column arrangement from `[tui].layout`; resolved against the frame
+    /// size on every render (see [`LayoutMode::is_portrait`]).
+    layout_mode: LayoutMode,
+    /// Whether the last frame stacked both columns into one (portrait with
+    /// both visible), where Tab walks every section linearly. Set by render.
+    stacked: std::cell::Cell<bool>,
     /// Whether a tour pull is in progress (for post-pull panel rebuild)
     is_pulling_tour: bool,
     /// Remote tour ids with a pull task currently in flight. The dedup guard for
@@ -352,11 +359,10 @@ impl BrowserLayout {
         // Content panel tab layout comes from `[tui].content_tab_order`. Resolved once at
         // construction: reordering tabs mid-session would invalidate the panel
         // positions held by in-flight search/reconcile requests.
-        let tab_order = db
-            .path()
-            .parent()
-            .map(|dir| ContentTabOrder::from_config(&Config::load_layered(dir).tui))
-            .unwrap_or_default();
+        let tui_config = db.path().parent().map(|dir| Config::load_layered(dir).tui);
+        let tab_order = tui_config.as_ref().map(ContentTabOrder::from_config).unwrap_or_default();
+        let layout_mode =
+            LayoutMode::from_config(tui_config.as_ref().and_then(|tui| tui.layout.as_deref()));
 
         let left_pane = LeftPane::new(&db, &registry, &tab_order);
         let right_pane = RightPane::new(&db);
@@ -389,6 +395,8 @@ impl BrowserLayout {
             left_pane_size: LeftPaneSize::Regular,
             right_pane_size: RightPaneSize::Regular,
             details_pane_size: DetailsPaneSize::Regular,
+            layout_mode,
+            stacked: std::cell::Cell::new(false),
             is_pulling_tour: false,
             pulling_tour_ids: std::collections::HashSet::new(),
             spinning_items: Vec::new(),
@@ -3066,8 +3074,62 @@ impl BrowserLayout {
         }
     }
 
+    /// The sections of the stacked (portrait) layout in Tab order, top to
+    /// bottom: the lists column, then the preview and, unless it's hidden
+    /// (a collection overview has no details), the details pane under it.
+    fn stacked_focus_cycle(&self) -> Vec<(FocusArea, RightPaneFocus)> {
+        let mut cycle: Vec<(FocusArea, RightPaneFocus)> = [
+            FocusArea::Search,
+            FocusArea::ContextPanel,
+            FocusArea::FiltersPanel,
+            FocusArea::ContentPanel,
+        ]
+        .into_iter()
+        .map(|area| (area, RightPaneFocus::Steps))
+        .collect();
+        cycle.push((FocusArea::Main, RightPaneFocus::Steps));
+        if !self.right_pane.overview_active {
+            cycle.push((FocusArea::Main, RightPaneFocus::Details));
+        }
+        cycle
+    }
+
+    /// Tab in the stacked layout: move linearly through every section of the
+    /// single column, crossing between the lists and the preview, instead of
+    /// cycling within the current column. Returns `false` when the last frame
+    /// wasn't stacked, leaving Tab to its per-column behaviour.
+    fn cycle_stacked_focus(&mut self, forward: bool) -> bool {
+        if !self.stacked.get() {
+            return false;
+        }
+        let cycle = self.stacked_focus_cycle();
+        let current = cycle.iter().position(|&(area, right)| {
+            area == self.focus && (area != FocusArea::Main || right == self.right_pane.focused)
+        });
+        let len = cycle.len();
+        let next = match current {
+            Some(i) if forward => (i + 1) % len,
+            Some(i) => (i + len - 1) % len,
+            None => 0,
+        };
+        let (area, right) = cycle[next];
+        self.focus = area;
+        if area == FocusArea::Main {
+            match right {
+                RightPaneFocus::Details => self.right_pane.focus_details(),
+                _ => self.right_pane.focus_steps(),
+            }
+        }
+        tracing::debug!(target: "codemark::ui", focus = ?self.focus, forward, "stacked focus cycle");
+        self.update_focus_state();
+        true
+    }
+
     /// Cycle to the next focusable area within the current pane.
     pub fn next_focus(&mut self) {
+        if self.cycle_stacked_focus(true) {
+            return;
+        }
         match self.focus {
             FocusArea::Main => {
                 self.right_pane.cycle_internal_focus(true);
@@ -3086,6 +3148,9 @@ impl BrowserLayout {
 
     /// Cycle to the previous focusable area within the current pane.
     pub fn previous_focus(&mut self) {
+        if self.cycle_stacked_focus(false) {
+            return;
+        }
         match self.focus {
             FocusArea::Main => {
                 self.right_pane.cycle_internal_focus(false);
@@ -3203,14 +3268,28 @@ enum RenderMode {
 impl BrowserLayout {
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        // Portrait stacks the lists column above the preview column instead of
+        // beside it (lazygit's portrait mode), and squashes every unfocused
+        // section to a title bar so each column shows one expanded section.
+        let portrait = self.layout_mode.is_portrait(area.width, area.height);
         let (left_constraints, render_mode) =
             if self.right_pane_size.is_fullscreen() || self.details_pane_size.is_fullscreen() {
                 // Right pane (or details) takes full width
                 (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
             } else {
                 // Use left pane size to determine layout
-                let left_percent = self.left_pane_size.left_width_percent();
-                if let Some(right_percent) = self.left_pane_size.right_width_percent() {
+                let mut left_percent = self.left_pane_size.left_width_percent();
+                let mut right_percent = self.left_pane_size.right_width_percent();
+                // Stacked, an expanded Context/Filters panel shares the lists
+                // column with the Content list, so give the column more rows.
+                if portrait
+                    && self.left_pane_size == LeftPaneSize::Regular
+                    && matches!(self.focus, FocusArea::ContextPanel | FocusArea::FiltersPanel)
+                {
+                    left_percent = 55;
+                    right_percent = Some(45);
+                }
+                if let Some(right_percent) = right_percent {
                     // Both panes visible
                     (
                         vec![
@@ -3226,18 +3305,20 @@ impl BrowserLayout {
             };
 
         let chunks = Layout::default()
-            .direction(Direction::Horizontal)
+            .direction(if portrait { Direction::Vertical } else { Direction::Horizontal })
             .constraints(left_constraints)
             .split(area);
 
+        self.stacked.set(portrait && matches!(render_mode, RenderMode::Both));
         match render_mode {
             RenderMode::Both => {
-                self.left_pane.render(chunks[0], buf);
-                self.right_pane.render(
+                self.left_pane.render_with(chunks[0], buf, portrait);
+                self.right_pane.render_with(
                     chunks[1],
                     buf,
                     RightPaneSize::Regular,
                     self.details_pane_size,
+                    portrait,
                 );
             }
             RenderMode::LeftOnly => {
@@ -3293,6 +3374,8 @@ mod tests {
     use super::*;
     use crate::event::{EventHandler, EventHandlerConfig};
     use codemark_core::storage::db::Database;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
 
     fn test_layout() -> BrowserLayout {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -3439,6 +3522,98 @@ mod tests {
         layout.set_focus(FocusArea::ContentPanel);
         assert_eq!(layout.right_pane_size, RightPaneSize::Regular);
         assert_eq!(layout.details_pane_size, DetailsPaneSize::Regular);
+    }
+
+    /// Render `layout` into a fresh `width` x `height` buffer.
+    fn render_at(layout: &BrowserLayout, width: u16, height: u16) {
+        let area = Rect::new(0, 0, width, height);
+        layout.render(area, &mut Buffer::empty(area));
+    }
+
+    #[test]
+    fn portrait_stacks_lists_above_preview_and_squashes_sections() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        let content = layout.left_pane.content_panel.last_area();
+        let right = layout.right_pane.last_area();
+        assert_eq!(right.width, 80, "the preview column takes the full width");
+        assert!(content.bottom() <= right.y, "lists sit above the preview: {content:?} {right:?}");
+        assert_eq!(layout.left_pane.search.last_area().height, 1, "unfocused search squashes");
+        assert_eq!(layout.left_pane.context_panel.last_area().height, 1);
+        assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
+        assert!(content.height >= 3, "the active Content list stays expanded");
+    }
+
+    #[test]
+    fn portrait_expands_the_focused_left_section_only() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContextPanel);
+        render_at(&layout, 80, 30);
+
+        assert!(layout.left_pane.context_panel.last_area().height >= 3);
+        assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
+        assert_eq!(layout.left_pane.content_panel.last_area().height, 1);
+        assert!(layout.left_pane.content_panel.is_collapsed());
+    }
+
+    #[test]
+    fn tab_walks_the_stacked_column_top_to_bottom() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Portrait;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        render_at(&layout, 80, 30);
+        assert!(
+            layout.right_pane.steps.is_collapsed(),
+            "focused details push the preview to a bar"
+        );
+        assert!(layout.right_pane.details.last_area().height >= 3);
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Search, "wraps to the top of the column");
+
+        layout.previous_focus();
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        layout.previous_focus();
+        layout.previous_focus();
+        assert_eq!(layout.focus, FocusArea::ContentPanel, "Shift+Tab climbs back up");
+    }
+
+    #[test]
+    fn tab_stays_within_the_column_in_landscape() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Landscape;
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 120, 40);
+
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Search, "wraps within the lists column");
+    }
+
+    #[test]
+    fn short_landscape_squashes_unfocused_sections() {
+        let mut layout = test_layout();
+        layout.layout_mode = LayoutMode::Landscape;
+        layout.set_focus(FocusArea::ContentPanel);
+
+        render_at(&layout, 120, 40);
+        assert_eq!(layout.left_pane.context_panel.last_area().height, 7, "tall: regular heights");
+
+        render_at(&layout, 120, 20);
+        assert_eq!(layout.left_pane.context_panel.last_area().height, 1, "short: squashed");
+        assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
+        assert!(layout.left_pane.content_panel.last_area().height > 10);
     }
 
     #[test]

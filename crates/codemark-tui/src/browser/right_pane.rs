@@ -73,6 +73,10 @@ pub(crate) struct LiveLocation {
     pub status: live_resolution::LiveUIStatus,
 }
 
+/// Below this many rows the unfocused details pane squashes to its title bar
+/// so the preview keeps the height (lazygit's squashed panels).
+const DETAILS_SQUASH_BELOW_ROWS: u16 = 30;
+
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
@@ -1577,6 +1581,20 @@ impl RightPane {
         size: RightPaneSize,
         details_size: DetailsPaneSize,
     ) {
+        self.render_with(area, buf, size, details_size, false);
+    }
+
+    /// [`Self::render`], squashing the unfocused details pane to its one-line
+    /// title bar when `force_squash` (the portrait layout) or when the pane is
+    /// shorter than [`DETAILS_SQUASH_BELOW_ROWS`].
+    pub fn render_with(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        size: RightPaneSize,
+        details_size: DetailsPaneSize,
+        force_squash: bool,
+    ) {
         self.last_area.set(area);
 
         // Collections have no notes or comments, so the details pane (Details /
@@ -1615,8 +1633,11 @@ impl RightPane {
             return;
         }
 
+        let squash_details = force_squash || area.height < DETAILS_SQUASH_BELOW_ROWS;
         let info_height = if self.focused == RightPaneFocus::Details {
             self.info_config.max
+        } else if squash_details {
+            1
         } else {
             self.info_config.min
         };
@@ -1625,11 +1646,21 @@ impl RightPane {
         // pane collapses to zero height but the pager is kept.
         let pager_height = if self.pager_total > 1 { 1 } else { 0 };
         let details_height = if hide_details { 0 } else { info_height };
-        let constraints = vec![
-            Constraint::Min(0),
-            Constraint::Length(pager_height),
-            Constraint::Length(details_height),
-        ];
+        // Squashed with the details focused, the two swap roles: the steps
+        // collapse to their title bar and the details fill the pane, so the
+        // preview stays reachable (by click or Tab) instead of being crowded
+        // out by the expanded details.
+        let steps_collapsed =
+            squash_details && !hide_details && self.focused == RightPaneFocus::Details;
+        let constraints = if steps_collapsed {
+            vec![Constraint::Length(1), Constraint::Length(pager_height), Constraint::Min(0)]
+        } else {
+            vec![
+                Constraint::Min(0),
+                Constraint::Length(pager_height),
+                Constraint::Length(details_height),
+            ]
+        };
 
         // Split vertically: steps (flex), pager (1 row or 0), details (dynamic height)
         let chunks =
@@ -1639,6 +1670,9 @@ impl RightPane {
         // steps tabbed panel (single bookmark / entered tour).
         if self.overview_active {
             self.render_overview_block(chunks[0], buf);
+        } else if steps_collapsed {
+            self.steps.health_label.set(self.preview_health());
+            self.steps.render_collapsed(chunks[0], buf);
         } else {
             self.steps.health_label.set(self.preview_health());
             self.render_steps_or_loading(chunks[0], buf);
@@ -1653,7 +1687,14 @@ impl RightPane {
         }
 
         if !hide_details {
-            self.render_details_block(chunks[2], buf);
+            if chunks[2].height < 3 {
+                // Squashed: the title bar still records `last_details_area`
+                // so a click on it focuses (and so expands) the details pane.
+                self.last_details_area.set(chunks[2]);
+                self.details.render_collapsed(chunks[2], buf);
+            } else {
+                self.render_details_block(chunks[2], buf);
+            }
         }
     }
 

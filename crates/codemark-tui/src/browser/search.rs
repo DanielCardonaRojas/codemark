@@ -78,6 +78,28 @@ impl SearchBar {
         self.last_area.set(Rect::default());
     }
 
+    /// Whether the search bar holds keyboard focus.
+    pub fn is_focused(&self) -> bool {
+        self.focused
+    }
+
+    /// Render the search bar squashed to one borderless row, between the
+    /// open-ended `╶`/`╴` caps the squashed panels use. Used by the squashed
+    /// left pane while the bar isn't focused; a focused bar gets its frame.
+    pub fn render_collapsed(&self, area: Rect, buf: &mut Buffer) {
+        if area.is_empty() {
+            self.invalidate_area();
+            return;
+        }
+        let row = Rect { height: 1, ..area };
+        self.last_area.set(row);
+        let style = Style::default().fg(crate::theme::palette().dim);
+        buf.set_string(row.left(), row.y, "╶", style);
+        buf.set_string(row.right() - 1, row.y, "╴", style);
+        let inner = Rect { x: row.x + 1, width: row.width.saturating_sub(2), ..row };
+        self.render_content(inner, buf);
+    }
+
     /// Get the current search query.
     pub fn query(&self) -> &str {
         &self.query

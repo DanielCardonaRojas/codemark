@@ -740,6 +740,7 @@ mod tests {
         codemark_core::config::TuiConfig {
             theme: None,
             content_tab_order: order.map(|names| names.iter().map(|s| s.to_string()).collect()),
+            layout: None,
         }
     }
 

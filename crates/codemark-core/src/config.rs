@@ -196,6 +196,15 @@ pub struct TuiConfig {
     /// shipped default config sets `["collections", "bookmarks", "tours"]`, so
     /// fresh installs open on Collections. See [`ContentTabName`].
     pub content_tab_order: Option<Vec<String>>,
+
+    /// Pane arrangement: `"auto"` (default), `"portrait"` or `"landscape"`.
+    ///
+    /// Landscape puts the lists column beside the preview column; portrait
+    /// stacks the lists above the preview and squashes every unfocused
+    /// section to a one-line title bar, for narrow terminal splits. `auto`
+    /// picks portrait when the terminal is narrower than 100 columns and at
+    /// least 24 rows tall. Unknown values fall back to `auto`.
+    pub layout: Option<String>,
 }
 
 /// A Content panel tab, used to configure tab order independently of the TUI.
