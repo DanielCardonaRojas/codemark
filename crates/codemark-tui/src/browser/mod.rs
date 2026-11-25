@@ -3115,7 +3115,12 @@ impl BrowserLayout {
             self.right_pane.focus_steps();
         }
         tracing::debug!(target: "codemark::ui", focus = ?self.focus, forward, "stacked focus cycle");
-        self.update_focus_state();
+        // Tab never moves the selection, so the preview already shows the
+        // selected item: don't re-preview it on reaching the list. That would
+        // swap an entered collection's steps back to its overview (and drop
+        // the details bar) just for walking the column; moving the selection
+        // still refreshes the preview as usual.
+        self.update_focus_state_with(false);
         true
     }
 
@@ -3596,6 +3601,48 @@ mod tests {
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         layout.previous_focus();
         assert_eq!(layout.focus, FocusArea::ContentPanel, "Shift+Tab climbs back up");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stacked_tab_back_to_the_list_keeps_the_entered_collection() {
+        use crate::event::Event;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let root = seeded_repo(
+            "bm-stack",
+            "fn stack",
+            "src/s.rs",
+            "fn stack() -> u8 { 1 }\n",
+            "col-stack",
+            "StackTour",
+        );
+        let db = Database::open(&root.join(".codemark").join("codemark.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        let mut layout = BrowserLayout::new(db, handler);
+        layout.layout_mode = LayoutMode::Portrait;
+        let collections_pos = layout.tab_position(ContentTab::Collections);
+        layout.left_pane.content_panel.tabs.set_selected(collections_pos);
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 80, 30);
+        assert!(layout.right_pane.overview_active, "the list shows the collection overview");
+
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(!layout.right_pane.overview_active, "Enter shows the collection's steps");
+        let steps = layout.right_pane.steps_data.len();
+        assert!(steps > 0, "the entered collection has steps");
+
+        // Walk the whole column back round to the list without moving the selection.
+        render_at(&layout, 80, 30);
+        layout.set_focus(FocusArea::Main);
+        // Preview -> search -> Repos -> Tags -> list.
+        for _ in 0..4 {
+            layout.next_focus();
+            render_at(&layout, 80, 30);
+        }
+        assert_eq!(layout.focus, FocusArea::ContentPanel);
+        assert!(!layout.right_pane.overview_active, "returning to the list keeps the steps");
+        assert_eq!(layout.right_pane.steps_data.len(), steps);
+        assert_eq!(layout.right_pane.details.last_area().height, 1, "details bar still shown");
     }
 
     #[test]
