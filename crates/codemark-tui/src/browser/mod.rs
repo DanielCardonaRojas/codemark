@@ -3075,8 +3075,8 @@ impl BrowserLayout {
     }
 
     /// The sections of the stacked (portrait) layout in Tab order, top to
-    /// bottom: the lists column, then the preview. The details pane under it
-    /// is pinned to its title bar there and never takes focus.
+    /// bottom: the lists column, then the preview and, unless it's hidden
+    /// (a collection overview has no details), the details pane under it.
     fn stacked_focus_cycle(&self) -> Vec<(FocusArea, RightPaneFocus)> {
         let mut cycle: Vec<(FocusArea, RightPaneFocus)> = [
             FocusArea::Search,
@@ -3088,6 +3088,9 @@ impl BrowserLayout {
         .map(|area| (area, RightPaneFocus::Steps))
         .collect();
         cycle.push((FocusArea::Main, RightPaneFocus::Steps));
+        if !self.right_pane.overview_active {
+            cycle.push((FocusArea::Main, RightPaneFocus::Details));
+        }
         cycle
     }
 
@@ -3109,10 +3112,13 @@ impl BrowserLayout {
             Some(i) => (i + len - 1) % len,
             None => 0,
         };
-        let (area, _) = cycle[next];
+        let (area, right) = cycle[next];
         self.focus = area;
         if area == FocusArea::Main {
-            self.right_pane.focus_steps();
+            match right {
+                RightPaneFocus::Details => self.right_pane.focus_details(),
+                _ => self.right_pane.focus_steps(),
+            }
         }
         tracing::debug!(target: "codemark::ui", focus = ?self.focus, forward, "stacked focus cycle");
         // Tab never moves the selection, so the preview already shows the
@@ -3594,10 +3600,14 @@ mod tests {
         assert_eq!(layout.focus, FocusArea::Main);
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         layout.next_focus();
-        assert_eq!(layout.focus, FocusArea::Search, "skips the pinned details and wraps");
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        layout.next_focus();
+        assert_eq!(layout.focus, FocusArea::Search, "wraps to the top of the column");
 
         layout.previous_focus();
-        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+        layout.previous_focus();
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         layout.previous_focus();
         assert_eq!(layout.focus, FocusArea::ContentPanel, "Shift+Tab climbs back up");
@@ -3634,8 +3644,8 @@ mod tests {
         // Walk the whole column back round to the list without moving the selection.
         render_at(&layout, 80, 30);
         layout.set_focus(FocusArea::Main);
-        // Preview -> search -> Repos -> Tags -> list.
-        for _ in 0..4 {
+        // Preview -> details -> search -> Repos -> Tags -> list.
+        for _ in 0..5 {
             layout.next_focus();
             render_at(&layout, 80, 30);
         }
@@ -3646,22 +3656,30 @@ mod tests {
     }
 
     #[test]
-    fn stacked_details_stay_pinned_to_their_title_bar() {
+    fn stacked_details_expand_below_a_visible_preview() {
         use crate::event::Event;
         use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let mut layout = test_layout();
         layout.layout_mode = LayoutMode::Portrait;
         layout.set_focus(FocusArea::ContentPanel);
-        render_at(&layout, 80, 30);
+        render_at(&layout, 80, 40);
+        assert_eq!(layout.right_pane.details.last_area().height, 1, "a bar until focused");
 
         layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE)));
-        assert_eq!(layout.focus, FocusArea::Main);
-        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps, "5 lands on the preview");
-
-        render_at(&layout, 80, 30);
-        assert_eq!(layout.right_pane.details.last_area().height, 1, "details stay a bar");
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "5 reaches the details");
+        render_at(&layout, 80, 40);
+        assert_eq!(
+            layout.right_pane.details.last_area().height,
+            left_pane::STACKED_SECTION_ROWS,
+            "focused details take the standard height",
+        );
         assert!(!layout.right_pane.steps.is_collapsed(), "the preview stays expanded");
+
+        // Too short for both: the preview keeps a line of code, details give way.
+        render_at(&layout, 80, 24);
+        assert!(layout.right_pane.steps.last_area().height >= 3);
+        assert!(layout.right_pane.details.last_area().height >= 3);
     }
 
     #[test]

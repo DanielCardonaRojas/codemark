@@ -77,6 +77,10 @@ pub(crate) struct LiveLocation {
 /// so the preview keeps the height (lazygit's squashed panels).
 const DETAILS_SQUASH_BELOW_ROWS: u16 = 30;
 
+/// Rows the preview keeps in the stacked layout while the details pane is
+/// expanded below it: its frame plus one line of code.
+const STACKED_MIN_PREVIEW_ROWS: u16 = 3;
+
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
@@ -96,10 +100,6 @@ pub struct RightPane {
     /// ([`RightPaneSize::SideComments`]), its Comments tab listing threads
     /// level with their code.
     side_comments: std::cell::Cell<bool>,
-    /// Whether the last frame was the stacked (portrait) layout, where the
-    /// details pane is pinned to its title bar under the preview and can't
-    /// take focus (see [`Self::focus_details`]). Set by `render_with`.
-    details_pinned: std::cell::Cell<bool>,
     /// Where the comment list was drawn beside the code last frame.
     last_rail_area: std::cell::Cell<Rect>,
     /// Whether the right pane has focus while the comment list is its
@@ -265,7 +265,6 @@ impl RightPane {
             shown_preview_base: None,
             inline_threads_cache: None,
             side_comments: std::cell::Cell::new(false),
-            details_pinned: std::cell::Cell::new(false),
             last_rail_area: std::cell::Cell::new(Rect::default()),
             comments_focus: false,
             needs_preview_update: false,
@@ -1638,12 +1637,20 @@ impl RightPane {
             return;
         }
 
-        self.details_pinned.set(force_squash);
+        // Stacked, the details expand only while they actually hold focus: the
+        // right pane remembers Details as its focus after Tab moves on to the
+        // lists, and the expanded pane would then linger under the preview.
+        let details_focused = if force_squash {
+            self.details.focused
+        } else {
+            self.focused == RightPaneFocus::Details
+        };
         let squash_details = force_squash || area.height < DETAILS_SQUASH_BELOW_ROWS;
         let info_height = if force_squash {
-            // Pinned to its title bar in the stacked layout, focused or not.
-            1
-        } else if self.focused == RightPaneFocus::Details {
+            // Stacked, the details pane is a title bar under the preview until
+            // focused, then the standard section height (like the lists).
+            if details_focused { super::left_pane::STACKED_SECTION_ROWS } else { 1 }
+        } else if details_focused {
             self.info_config.max
         } else if squash_details {
             1
@@ -1659,12 +1666,20 @@ impl RightPane {
         // collapse to their title bar and the details fill the pane, so the
         // preview stays reachable (by click or Tab) instead of being crowded
         // out by the expanded details.
-        let steps_collapsed = squash_details
-            && !force_squash
-            && !hide_details
-            && self.focused == RightPaneFocus::Details;
+        //
+        // Stacked, the preview instead stays expanded under the lists while the
+        // details take their standard height below it, keeping at least one
+        // line of code (`Min` outranks the details' `Length`), so every section
+        // of the single column stays on screen as Tab walks it.
+        let steps_collapsed = squash_details && !force_squash && !hide_details && details_focused;
         let constraints = if steps_collapsed {
             vec![Constraint::Length(1), Constraint::Length(pager_height), Constraint::Min(0)]
+        } else if force_squash && details_focused && !hide_details {
+            vec![
+                Constraint::Min(STACKED_MIN_PREVIEW_ROWS),
+                Constraint::Length(pager_height),
+                Constraint::Length(details_height),
+            ]
         } else {
             vec![
                 Constraint::Min(0),
@@ -2224,11 +2239,7 @@ impl RightPane {
         // The details pane is hidden while previewing a collection overview
         // (collections have no notes or comments), so keep focus on the
         // overview instead of landing on an invisible pane.
-        //
-        // Stacked, the details pane is pinned to its title bar: getting to it
-        // and back to the preview through the single column was awkward, so
-        // it stays a glanceable bar and focus stays on the preview.
-        if self.overview_active || self.details_pinned.get() {
+        if self.overview_active {
             self.focus_steps();
             return;
         }
