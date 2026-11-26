@@ -688,7 +688,8 @@ impl Component for MarkdownPanel {
                 .begin_symbol(None)
                 .end_symbol(None)
                 .track_symbol(None)
-                .thumb_symbol("┃");
+                .thumb_symbol(super::SCROLLBAR_THUMB)
+                .thumb_style(super::scrollbar_style(self.focused));
 
             // Model `content_length` as the number of scroll positions
             // (`total - height + 1`) so Ratatui 0.29's thumb math yields the
@@ -1217,7 +1218,8 @@ mod tests {
     /// Whether the right-edge column of `buf` contains the scrollbar thumb.
     fn has_scrollbar(buf: &Buffer, area: Rect) -> bool {
         let x = area.right() - 1;
-        (area.top()..area.bottom()).any(|y| buf.cell((x, y)).is_some_and(|c| c.symbol() == "┃"))
+        (area.top()..area.bottom())
+            .any(|y| buf.cell((x, y)).is_some_and(|c| c.symbol() == super::super::SCROLLBAR_THUMB))
     }
 
     #[test]
