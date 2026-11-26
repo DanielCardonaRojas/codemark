@@ -381,14 +381,18 @@ impl SettingsOverlay {
         SettingsAction::Handled
     }
 
-    /// Render the overlay as a centered modal over `area`.
+    /// Render the overlay as a centered modal over `area`. In the
+    /// single-column (`portrait`) layout the screen is narrow, so the modal
+    /// takes nearly its full width instead of about half.
     pub fn render(
         &self,
         area: Rect,
         buf: &mut Buffer,
         config: &[(&'static str, String, Option<String>)],
+        portrait: bool,
     ) {
-        let popup = centered_rect(area, 0.55, 0.7);
+        let width_pct = if portrait { PORTRAIT_WIDTH_PCT } else { LANDSCAPE_WIDTH_PCT };
+        let popup = centered_rect(area, width_pct, 0.7);
         Widget::render(Clear, popup, buf);
 
         let palette = crate::theme::palette();
@@ -671,6 +675,11 @@ fn render_about(area: Rect, buf: &mut Buffer, selected_link: usize) {
     Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
 }
 
+/// Share of the screen width the modal takes in the two-column layout.
+const LANDSCAPE_WIDTH_PCT: f32 = 0.55;
+/// Share of the screen width the modal takes in the single-column layout.
+const PORTRAIT_WIDTH_PCT: f32 = 0.92;
+
 /// Compute a rectangle centered in `area`, sized to the given fraction of its
 /// width and height.
 fn centered_rect(area: Rect, width_pct: f32, height_pct: f32) -> Rect {
@@ -781,7 +790,7 @@ mod tests {
         // Render once so the title-bar hit areas are populated.
         let area = Rect::new(0, 0, 120, 40);
         let mut buf = Buffer::empty(area);
-        overlay.render(area, &mut buf, &[]);
+        overlay.render(area, &mut buf, &[], false);
 
         // Click the center of each tab's recorded rectangle and verify the
         // overlay switches to it.
@@ -806,6 +815,25 @@ mod tests {
     }
 
     #[test]
+    fn portrait_layout_widens_the_popup() {
+        let mut overlay = SettingsOverlay::new(None);
+        overlay.toggle();
+        let area = Rect::new(0, 0, 80, 40);
+        // The popup's left border: the first `╭` on its top row.
+        let left_edge = |portrait: bool| {
+            let mut buf = Buffer::empty(area);
+            overlay.render(area, &mut buf, &[], portrait);
+            (0..area.height)
+                .find_map(|y| (0..area.width).find(|&x| buf[(x, y)].symbol() == "╭"))
+                .expect("popup border drawn")
+        };
+        let landscape = left_edge(false);
+        let portrait = left_edge(true);
+        assert!(portrait < landscape, "portrait edge {portrait} vs landscape {landscape}");
+        assert!(portrait <= 4, "portrait popup spans nearly the full width: {portrait}");
+    }
+
+    #[test]
     fn clipped_tab_labels_are_not_clickable() {
         let mut overlay = SettingsOverlay::new(None);
         overlay.toggle();
@@ -815,9 +843,9 @@ mod tests {
         // top border can't select a clipped tab.
         let area = Rect::new(0, 0, 24, 20);
         let mut buf = Buffer::empty(area);
-        overlay.render(area, &mut buf, &[]);
+        overlay.render(area, &mut buf, &[], false);
 
-        let popup = centered_rect(area, 0.55, 0.7);
+        let popup = centered_rect(area, LANDSCAPE_WIDTH_PCT, 0.7);
         let title_right = popup.x + popup.width - 1;
         for (_, rect) in overlay.tab_hit_areas.borrow().iter() {
             assert!(
@@ -834,7 +862,7 @@ mod tests {
 
         let area = Rect::new(0, 0, 120, 40);
         let mut buf = Buffer::empty(area);
-        overlay.render(area, &mut buf, &[]);
+        overlay.render(area, &mut buf, &[], false);
 
         let before = overlay.tab();
         // A click well inside the body (not on the title row) is ignored.
