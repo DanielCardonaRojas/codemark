@@ -689,7 +689,7 @@ impl Component for MarkdownPanel {
                 .end_symbol(None)
                 .track_symbol(None)
                 .thumb_symbol(super::SCROLLBAR_THUMB)
-                .thumb_style(super::scrollbar_style(self.focused, Style::default()));
+                .thumb_style(super::scrollbar_style(self.focused));
 
             // Model `content_length` as the number of scroll positions
             // (`total - height + 1`) so Ratatui 0.29's thumb math yields the

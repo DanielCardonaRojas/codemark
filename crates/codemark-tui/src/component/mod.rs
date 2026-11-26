@@ -29,10 +29,11 @@ use crate::event::Event;
 /// than a box-drawing line so it reads as a bar rather than a border.
 pub const SCROLLBAR_THUMB: &str = "▐";
 
-/// Style for a scrollbar thumb: the focused border colour (`accent`) while its
-/// pane has focus, `unfocused` otherwise.
-pub fn scrollbar_style(focused: bool, unfocused: Style) -> Style {
-    if focused { Style::default().fg(crate::theme::palette().accent) } else { unfocused }
+/// Style for a scrollbar thumb, matching the pane border: `accent` while its
+/// pane has focus, `dim` otherwise.
+pub fn scrollbar_style(focused: bool) -> Style {
+    let palette = crate::theme::palette();
+    Style::default().fg(if focused { palette.accent } else { palette.dim })
 }
 
 /// Base trait for all UI components.

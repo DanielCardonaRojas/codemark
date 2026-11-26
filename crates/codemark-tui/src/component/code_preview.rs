@@ -871,7 +871,7 @@ impl CodePreview {
             .end_symbol(None)
             .track_symbol(None)
             .thumb_symbol(super::SCROLLBAR_THUMB)
-            .thumb_style(super::scrollbar_style(self.has_active_focus(), Style::default()));
+            .thumb_style(super::scrollbar_style(self.has_active_focus()));
 
         // Ratatui 0.29's thumb math sizes the thumb as
         // `viewport / (content_length - 1 + viewport)` and caps the thumb position at
