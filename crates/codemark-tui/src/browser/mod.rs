@@ -3563,7 +3563,7 @@ mod tests {
     }
 
     #[test]
-    fn portrait_stacks_lists_above_preview_and_squashes_sections() {
+    fn portrait_stacks_lists_above_preview_and_squashes_sections_but_not_search() {
         let mut layout = test_layout();
         layout.layout_mode = LayoutMode::Portrait;
         layout.set_focus(FocusArea::ContentPanel);
@@ -3573,7 +3573,7 @@ mod tests {
         let right = layout.right_pane.last_area();
         assert_eq!(right.width, 80, "the preview column takes the full width");
         assert!(content.bottom() <= right.y, "lists sit above the preview: {content:?} {right:?}");
-        assert_eq!(layout.left_pane.search.last_area().height, 1, "unfocused search squashes");
+        assert_eq!(layout.left_pane.search.last_area().height, 3, "search stays framed unfocused");
         assert_eq!(layout.left_pane.context_panel.last_area().height, 1);
         assert_eq!(layout.left_pane.filters_panel.last_area().height, 1);
         assert!(content.height >= 3, "the active Content list stays expanded");
@@ -3610,7 +3610,7 @@ mod tests {
             assert_eq!(expanded, Some(left_pane::STACKED_SECTION_ROWS), "{focus:?} expanded");
             assert_eq!(
                 layout.right_pane.last_area().y,
-                1 + left_pane::STACKED_SECTION_ROWS + 2,
+                3 + left_pane::STACKED_SECTION_ROWS + 2,
                 "{focus:?}: the preview starts at the same row",
             );
         }
