@@ -174,6 +174,9 @@ pub struct BrowserLayout {
     /// Whether the last frame stacked both columns into one (portrait with
     /// both visible), where Tab walks every section linearly. Set by render.
     stacked: std::cell::Cell<bool>,
+    /// Whether the last frame used the single-column (portrait) layout, so
+    /// overlays drawn over the browser can size themselves to match.
+    portrait: std::cell::Cell<bool>,
     /// The Content selection the preview was last loaded for, so the stacked
     /// Tab cycle re-previews the list only when its selection has changed.
     previewed_selection: Option<(ContentTab, String)>,
@@ -400,6 +403,7 @@ impl BrowserLayout {
             details_pane_size: DetailsPaneSize::Regular,
             layout_mode,
             stacked: std::cell::Cell::new(false),
+            portrait: std::cell::Cell::new(false),
             previewed_selection: None,
             is_pulling_tour: false,
             pulling_tour_ids: std::collections::HashSet::new(),
@@ -3298,12 +3302,18 @@ enum RenderMode {
 }
 
 impl BrowserLayout {
+    /// Whether the last frame used the single-column (portrait) layout.
+    pub fn is_portrait(&self) -> bool {
+        self.portrait.get()
+    }
+
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // Portrait stacks the lists column above the preview column instead of
         // beside it (lazygit's portrait mode), and squashes every unfocused
         // section to a title bar so each column shows one expanded section.
         let portrait = self.layout_mode.is_portrait(area.width, area.height);
+        self.portrait.set(portrait);
         let (left_constraints, render_mode) = if self.right_pane_size.is_fullscreen()
             || self.details_pane_size.is_fullscreen()
         {

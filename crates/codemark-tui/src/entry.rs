@@ -283,7 +283,7 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
                 ui::render_help_panel(help_area, f.buffer_mut(), &bindings);
             } else if settings.is_visible() {
                 let config = layout.config_info();
-                settings.render(size, f.buffer_mut(), &config);
+                settings.render(size, f.buffer_mut(), &config, layout.is_portrait());
             }
 
             // Draw notification if present
