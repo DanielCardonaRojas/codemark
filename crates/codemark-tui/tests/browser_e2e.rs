@@ -358,6 +358,63 @@ async fn filtering_narrows_the_bookmark_list() {
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
 }
 
+/// Terminal size the portrait snapshots render at: narrower than the `auto`
+/// layout's portrait cutoff and tall enough to stack the columns, so the
+/// default config picks the single-column layout with no config override.
+const PORTRAIT_WIDTH: u16 = 80;
+const PORTRAIT_HEIGHT: u16 = 40;
+
+/// A sandbox with two resolvable bookmarks, Bookmarks pinned as the first
+/// Content tab, for the portrait snapshots.
+fn portrait_sandbox() -> Sandbox {
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    sandbox.write_legacy_tab_order_config();
+    sandbox
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn portrait_layout_stacks_lists_above_preview() {
+    let (layout, _sandbox) = make_layout(portrait_sandbox());
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    assert_eq!(layout.content_tab(), Some(ContentTab::Bookmarks));
+
+    // The framed search bar (unfocused, but never collapsed in portrait), the
+    // Context and Filters panels squashed to title bars, the Bookmarks list
+    // expanded, and the preview below the whole column.
+    insta::assert_snapshot!(render_to_string(&layout, PORTRAIT_WIDTH, PORTRAIT_HEIGHT));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn portrait_layout_expands_the_focused_context_panel() {
+    let (mut layout, _sandbox) = make_layout(portrait_sandbox());
+    layout.set_focus(FocusArea::ContextPanel);
+
+    // Focus moving to Context swaps which section is expanded, but the search
+    // bar stays framed and the column keeps its height, so the preview starts
+    // on the same row as in `portrait_layout_stacks_lists_above_preview`.
+    insta::assert_snapshot!(render_to_string(&layout, PORTRAIT_WIDTH, PORTRAIT_HEIGHT));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn portrait_layout_shows_search_error_in_framed_bar() {
+    let (mut layout, _sandbox) = make_layout(portrait_sandbox());
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    let request_id = layout.active_search_request;
+    layout.handle_event(&Event::SearchError { request_id, msg: "index unavailable".into() });
+
+    // The search bar isn't focused, yet in portrait it keeps its frame, so a
+    // failed search still surfaces its error rather than hiding it behind a
+    // collapsed title bar.
+    let screen = render_to_string(&layout, PORTRAIT_WIDTH, PORTRAIT_HEIGHT);
+    assert!(screen.contains("index unavailable"), "error shown:\n{screen}");
+    insta::assert_snapshot!(screen);
+}
+
 // @lat: [[tests#Content Tab Order#Bookmark Search Targets Bookmarks Under A Reordered Layout]]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bookmark_search_targets_bookmarks_panel_under_reordered_tabs() {

@@ -167,7 +167,8 @@ impl LeftPane {
     /// every section at its regular height, the pane squashes like lazygit's
     /// side panels: the active section (the last focused of Context, Filters
     /// and Content; Content while the preview has focus) fills the pane and
-    /// the others collapse to one-line title bars, as does the search bar
+    /// the others collapse to one-line title bars. The search bar stays framed
+    /// in the portrait layout; in a too-short landscape pane it collapses too
     /// while it isn't focused.
     fn render_all(&self, area: Rect, buf: &mut Buffer, force_squash: bool) {
         let regular_height =
@@ -211,17 +212,22 @@ impl LeftPane {
         self.content_panel.render(chunks[3], buf);
     }
 
-    /// Height of the lists column in the stacked (portrait) layout: the search
-    /// bar, the active section at [`STACKED_SECTION_ROWS`], and a title bar for
-    /// each of the other two sections.
+    /// Height of the lists column in the stacked (portrait) layout: the framed
+    /// search bar, the active section at [`STACKED_SECTION_ROWS`], and a title
+    /// bar for each of the other two sections.
+    ///
+    /// The search bar is always framed here, focused or not: it's only three
+    /// rows, collapsing it saved little, and it keeps search prominent. It
+    /// also keeps the column a constant height as focus moves.
     pub fn stacked_height(&self) -> u16 {
-        self.search_rows_squashed() + STACKED_SECTION_ROWS + 2
+        SEARCH_ROWS + STACKED_SECTION_ROWS + 2
     }
 
-    /// The search bar's height in the squashed layout: a title bar unless it
+    /// The search bar's height in the squashed layout: always framed in the
+    /// portrait layout (`active_rows` fixed), otherwise a title bar unless it
     /// has focus.
-    fn search_rows_squashed(&self) -> u16 {
-        if self.search.is_focused() { SEARCH_ROWS } else { 1 }
+    fn search_rows_squashed(&self, active_rows: Option<u16>) -> u16 {
+        if active_rows.is_some() || self.search.is_focused() { SEARCH_ROWS } else { 1 }
     }
 
     /// The squashed layout of [`Self::render_all`].
@@ -242,7 +248,7 @@ impl LeftPane {
             (true, None) => Constraint::Min(0),
             (false, _) => Constraint::Length(1),
         };
-        let search_rows = self.search_rows_squashed();
+        let search_rows = self.search_rows_squashed(active_rows);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
