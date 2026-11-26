@@ -2067,16 +2067,25 @@ impl RightPane {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        // The last frame may have hidden the list (e.g. the terminal narrowed
+        // into the portrait layout), so move focus off it before routing:
+        // otherwise this key would go to a pane that isn't drawn.
+        self.leave_hidden_comments();
         let handled = self.route_event(event);
         // Beside the code the list is hidden with the Info and Query tabs: a
-        // tab switch that hid it must not leave focus on it, or keys would go
-        // to a pane that isn't drawn.
+        // tab switch that hid it must not leave focus on it either.
+        self.leave_hidden_comments();
+        handled
+    }
+
+    /// Move focus to the preview when the focused comment list isn't drawn.
+    fn leave_hidden_comments(&mut self) {
         if self.focused == RightPaneFocus::Comments
             && (!self.side_comments.get() || self.rail_preview().is_none())
         {
+            tracing::debug!(target: "codemark::ui", "comment list hidden; focusing the preview");
             self.focus_steps();
         }
-        handled
     }
 
     /// [`Self::handle_event`] before the focus check.
