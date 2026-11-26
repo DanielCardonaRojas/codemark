@@ -3373,7 +3373,7 @@ impl BrowserLayout {
                 self.right_pane.render(
                     chunks[0],
                     buf,
-                    self.right_pane_size,
+                    self.right_pane_size.effective(portrait),
                     self.details_pane_size,
                 );
                 // The left pane isn't drawn; clear its children's stale hit-test
@@ -4199,6 +4199,65 @@ mod tests {
         assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
         render(&layout);
         assert!(!layout.right_pane.steps.get_step_preview().unwrap().is_beside());
+    }
+
+    #[test]
+    fn portrait_skips_and_hides_the_comments_beside_the_code() {
+        use crate::component::{InlineComment, InlineThread};
+        use ratatui::buffer::Buffer;
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use ratatui::layout::Rect;
+
+        let mut layout = test_layout();
+        let area = Rect::new(0, 0, 120, 30);
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        preview.set_code((0..20).map(|i| format!("line{i}\n")).collect());
+        preview.set_threads(vec![InlineThread {
+            root_id: "first".into(),
+            anchor_start: 2,
+            anchor_end: 2,
+            start_col: 0,
+            end_col: 4,
+            entries: vec![InlineComment {
+                id: "first-root".into(),
+                author: "a".into(),
+                when: "today".into(),
+                body: "first body".into(),
+            }],
+        }]);
+        layout.set_focus(FocusArea::Main);
+        layout.right_pane.focus_steps();
+        let render = |layout: &BrowserLayout| layout.render(area, &mut Buffer::empty(area));
+        let press = |layout: &mut BrowserLayout, c: char| {
+            layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)))
+        };
+
+        // Wide, `+` reaches the comments beside the code; focus their list.
+        layout.layout_mode = LayoutMode::Landscape;
+        render(&layout);
+        for _ in 0..2 {
+            assert!(press(&mut layout, '+'));
+            render(&layout);
+        }
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::SideComments);
+        layout.right_pane.focus_comments();
+        render(&layout);
+        assert!(layout.right_pane.rail_has_focus());
+
+        // Narrowed into a single column, the layout draws as Full: the list
+        // is hidden, and the next key reaches the preview instead of the list.
+        layout.layout_mode = LayoutMode::Portrait;
+        render(&layout);
+        assert!(!layout.right_pane.steps.get_step_preview().unwrap().is_beside());
+        assert!(press(&mut layout, 'j'), "the key isn't lost on the hidden list");
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+
+        // In portrait `+` / `-` cycle past the side-comments layout.
+        layout.right_pane_size = RightPaneSize::Full;
+        assert!(press(&mut layout, '+'));
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::PreviewOnly);
+        assert!(press(&mut layout, '-'));
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::Full);
     }
 
     #[test]

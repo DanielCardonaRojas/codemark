@@ -303,6 +303,21 @@ impl RightPaneSize {
         }
     }
 
+    /// Step the layout cycle ([`Self::increase`] when `grow`, else
+    /// [`Self::decrease`]), skipping [`Self::SideComments`] when `portrait`:
+    /// a single column is too narrow to put the comments beside the code.
+    pub fn cycle(self, grow: bool, portrait: bool) -> Self {
+        let step = |size: Self| if grow { size.increase() } else { size.decrease() };
+        let next = step(self);
+        if portrait && next.details_beside() { step(next) } else { next }
+    }
+
+    /// The layout to draw: [`Self::SideComments`] falls back to [`Self::Full`]
+    /// in the portrait layout, e.g. when the terminal narrows while it's on.
+    pub fn effective(self, portrait: bool) -> Self {
+        if portrait && self.details_beside() { Self::Full } else { self }
+    }
+
     /// Check if the right pane should override the default layout.
     /// When true, the right pane takes full width regardless of left pane size.
     pub fn is_fullscreen(self) -> bool {
@@ -433,6 +448,19 @@ mod tests {
         assert_eq!(RightPaneSize::PreviewOnly.decrease(), RightPaneSize::SideComments);
         assert_eq!(RightPaneSize::SideComments.decrease(), RightPaneSize::Full);
         assert_eq!(RightPaneSize::Full.decrease(), RightPaneSize::Regular);
+    }
+
+    #[test]
+    fn right_pane_cycle_skips_side_comments_in_portrait() {
+        use RightPaneSize::*;
+        assert_eq!(Full.cycle(true, false), SideComments);
+        assert_eq!(PreviewOnly.cycle(false, false), SideComments);
+        assert_eq!(Full.cycle(true, true), PreviewOnly);
+        assert_eq!(PreviewOnly.cycle(false, true), Full);
+        assert_eq!(Regular.cycle(true, true), Full);
+        assert_eq!(SideComments.effective(true), Full);
+        assert_eq!(SideComments.effective(false), SideComments);
+        assert_eq!(PreviewOnly.effective(true), PreviewOnly);
     }
 
     #[test]

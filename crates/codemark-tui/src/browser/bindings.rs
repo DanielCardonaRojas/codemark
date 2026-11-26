@@ -115,7 +115,7 @@ impl BrowserLayout {
                     bindings.push(("r", "Reply to comment"));
                     bindings.push(("E", "Edit your comment"));
                     bindings.push(("d", "Delete comment thread"));
-                    if self.right_pane_size.details_beside() {
+                    if self.right_pane_size.effective(self.is_portrait()).details_beside() {
                         bindings.push(("z", "Fold thread replies"));
                         bindings.push(("Z", "Fold all thread replies"));
                     } else {

@@ -1944,9 +1944,10 @@ impl BrowserLayout {
         if self.focus == FocusArea::Main {
             // Beside the preview, the details pane is part of the preview's
             // layout, so `+`/`-` keep cycling that layout from either side.
-            if self.right_pane.focused == RightPaneFocus::Details
-                && !self.right_pane_size.details_beside()
-            {
+            // The portrait layout never puts the comments beside the code.
+            let portrait = self.is_portrait();
+            let current = self.right_pane_size.effective(portrait);
+            if self.right_pane.focused == RightPaneFocus::Details && !current.details_beside() {
                 // Cycle details pane size (Regular → Half → Full)
                 let old_size = self.details_pane_size;
                 self.details_pane_size = if grow {
@@ -1965,14 +1966,11 @@ impl BrowserLayout {
                 );
             } else {
                 // Cycle the preview pane layout
-                // (Regular → Full → SideComments → PreviewOnly → Regular).
-                let next = if grow {
-                    self.right_pane_size.increase()
-                } else {
-                    self.right_pane_size.decrease()
-                };
+                // (Regular → Full → SideComments → PreviewOnly → Regular),
+                // skipping SideComments in the portrait layout.
+                let next = current.cycle(grow, portrait);
                 // Entering the side-by-side layout shows the comment list.
-                if next.details_beside() && !self.right_pane_size.details_beside() {
+                if next.details_beside() && !current.details_beside() {
                     self.right_pane.show_details_tab();
                 }
                 self.right_pane_size = next;
