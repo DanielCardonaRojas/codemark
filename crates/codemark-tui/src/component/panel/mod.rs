@@ -773,7 +773,7 @@ impl Component for Panel {
                 .begin_symbol(None)
                 .end_symbol(None)
                 .track_symbol(None)
-                .thumb_symbol("┃")
+                .thumb_symbol(super::SCROLLBAR_THUMB)
                 .style(scrollbar_style);
 
             // Ratatui 0.29's thumb math sizes the thumb as

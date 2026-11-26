@@ -25,6 +25,16 @@ use ratatui::{
 
 use crate::event::Event;
 
+/// Glyph for the vertical scrollbar thumb: a right half block, a touch wider
+/// than a box-drawing line so it reads as a bar rather than a border.
+pub const SCROLLBAR_THUMB: &str = "▐";
+
+/// Style for a scrollbar thumb: the focused border colour (`accent`) while its
+/// pane has focus, `unfocused` otherwise.
+pub fn scrollbar_style(focused: bool, unfocused: Style) -> Style {
+    if focused { Style::default().fg(crate::theme::palette().accent) } else { unfocused }
+}
+
 /// Base trait for all UI components.
 ///
 /// Components are composable and can be nested to create complex layouts.

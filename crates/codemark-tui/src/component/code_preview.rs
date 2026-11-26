@@ -870,7 +870,8 @@ impl CodePreview {
             .begin_symbol(None)
             .end_symbol(None)
             .track_symbol(None)
-            .thumb_symbol("┃");
+            .thumb_symbol(super::SCROLLBAR_THUMB)
+            .thumb_style(super::scrollbar_style(self.has_active_focus(), Style::default()));
 
         // Ratatui 0.29's thumb math sizes the thumb as
         // `viewport / (content_length - 1 + viewport)` and caps the thumb position at
@@ -3130,13 +3131,13 @@ mod tests {
         let mut preview = CodePreview::new(numbered_code(40), "txt");
         preview.set_threads(vec![thread("a", 1, 1, &["one"])]);
         let buf = render_beside(&preview, 30, 44, 8);
-        let thumb = |x: u16| (0..8).any(|y| buf[(x, y)].symbol() == "┃");
+        let thumb = |x: u16| (0..8).any(|y| buf[(x, y)].symbol() == super::super::SCROLLBAR_THUMB);
         assert!(thumb(30 + 44 - 1), "thumb in the list's last column");
         assert!(!thumb(29), "none at the code's edge");
 
         // Without the list, the code keeps its own scrollbar.
         preview.invalidate_rail();
         let buf = render_to_buffer(&preview, 30, 8);
-        assert!((0..8).any(|y| buf[(29, y)].symbol() == "┃"));
+        assert!((0..8).any(|y| buf[(29, y)].symbol() == super::super::SCROLLBAR_THUMB));
     }
 }
