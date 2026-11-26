@@ -3373,7 +3373,7 @@ impl BrowserLayout {
                 self.right_pane.render(
                     chunks[0],
                     buf,
-                    self.right_pane_size,
+                    self.right_pane_size.effective(portrait),
                     self.details_pane_size,
                 );
                 // The left pane isn't drawn; clear its children's stale hit-test
