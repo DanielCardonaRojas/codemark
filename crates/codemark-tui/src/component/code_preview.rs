@@ -1608,7 +1608,9 @@ impl Component for CodePreview {
                         Some(false) => Span::styled("▸", Style::default().fg(palette.accent)),
                         None => Span::raw(" "),
                     });
-                    new_spans.extend(skip_cells(line.spans.iter().skip(3), h_scroll));
+                    // Span 3 is the gutter's separator: only code scrolls.
+                    new_spans.extend(line.spans.get(3).cloned());
+                    new_spans.extend(skip_cells(line.spans.iter().skip(4), h_scroll));
                     text_lines.push(Line::from(new_spans));
                 }
                 DisplayRow::Bubble { thread, row } => {
@@ -1788,34 +1790,41 @@ fn cells_before(text: &str, col: usize) -> usize {
 }
 
 /// `spans` with their first `cells` terminal cells dropped, for drawing a
-/// horizontally scrolled line. A wide character cut by the left edge becomes
-/// spaces so the rest of the line keeps its columns.
+/// horizontally scrolled line. Steps over whole graphemes, so a joined emoji
+/// counts as the two cells [`cells_before`] gives it. A wide grapheme cut by
+/// the left edge becomes spaces so the rest of the line keeps its columns.
 fn skip_cells<'a>(
     spans: impl Iterator<Item = &'a Span<'static>>,
     cells: usize,
 ) -> Vec<Span<'static>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let spans: Vec<&Span<'static>> = spans.collect();
+    if cells == 0 {
+        return spans.into_iter().cloned().collect();
+    }
+    let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+    // Byte offset where the kept text starts, and the cells it overshoots by.
     let mut skipped = 0;
-    let mut out = Vec::new();
-    for span in spans {
+    let mut cut = text.len();
+    for (i, g) in text.grapheme_indices(true) {
         if skipped >= cells {
-            out.push(span.clone());
-            continue;
+            cut = i;
+            break;
         }
-        let mut kept = String::new();
-        for c in span.content.chars() {
-            if skipped >= cells {
-                kept.push(c);
-                continue;
-            }
-            skipped += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-            // Half of a wide char hangs past the edge: pad it.
-            for _ in cells..skipped {
-                kept.push(' ');
-            }
-        }
-        if !kept.is_empty() {
+        skipped += unicode_width::UnicodeWidthStr::width(g);
+    }
+    // Pad goes on the first kept span, in its style.
+    let mut pad = skipped.saturating_sub(cells);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for span in spans {
+        let end = start + span.content.len();
+        if end > cut {
+            let mut kept = " ".repeat(std::mem::take(&mut pad));
+            kept.push_str(&span.content[cut.max(start) - start..]);
             out.push(Span::styled(kept, span.style));
         }
+        start = end;
     }
     out
 }
@@ -2338,6 +2347,33 @@ mod tests {
         assert_eq!(text(1), " xyz");
         assert_eq!(text(2), "xyz");
         assert_eq!(text(4), "z");
+
+        // A joined emoji is one two-cell grapheme, as `cells_before` has it.
+        let family = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
+        let spans = [Span::raw(format!("{family}ab"))];
+        let text = |n| {
+            skip_cells(spans.iter(), n).iter().map(|s| s.content.to_string()).collect::<String>()
+        };
+        assert_eq!(cells_before(family, family.chars().count()), 2);
+        assert_eq!(text(1), " ab");
+        assert_eq!(text(2), "ab");
+        assert_eq!(text(3), "b");
+    }
+
+    #[test]
+    fn scrolling_keeps_the_gutter_separator() {
+        let line = "x".repeat(60) + "END";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert!(preview.h_scroll.get() > 0);
+        let separator = preview.gutter_width() - 1;
+        assert_eq!(buf.cell((separator, 0)).unwrap().symbol(), " ", "{:?}", row_text(&buf, 0));
+        assert_eq!(buf.cell((separator + 1, 0)).unwrap().symbol(), "x");
     }
 
     #[test]
