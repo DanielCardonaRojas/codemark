@@ -506,10 +506,16 @@ impl CodePreview {
     /// Width available for code content within the last rendered area, i.e. the
     /// pane width minus the gutter and the scrollbar (when one is shown).
     fn content_width(&self) -> usize {
-        let area = self.last_area.get();
-        let height = area.height as usize;
-        let scrollbar = if self.total_rows() > height { 1 } else { 0 };
-        (area.width as usize).saturating_sub(self.gutter_width() as usize + scrollbar)
+        let scrollbar = usize::from(self.scrollbar_in_pane());
+        (self.last_area.get().width as usize)
+            .saturating_sub(self.gutter_width() as usize + scrollbar)
+    }
+
+    /// Whether [`Self::render_scrollbar`] draws in the code pane's last
+    /// column. Beside the code it sits at the side list's edge instead.
+    fn scrollbar_in_pane(&self) -> bool {
+        let height = self.last_area.get().height as usize;
+        !self.rail_shown() && !self.code.is_empty() && height > 0 && self.scroll_rows() > height
     }
 
     /// The furthest column the cursor may occupy on `line_idx`: just past its
@@ -526,15 +532,22 @@ impl CodePreview {
         let cursor_cell = self
             .selected_line
             .filter(|_| self.selection_mode && self.focused && width > 0)
-            .map(|line| cells_before(self.code.lines().nth(line).unwrap_or(""), self.cursor_col));
+            .map(|line| {
+                let text = self.code.lines().nth(line).unwrap_or("");
+                let cell = cells_before(text, self.cursor_col);
+                // A wide character needs both its cells on screen; past the
+                // line's end the cursor takes one.
+                let cursor_width = (cells_before(text, self.cursor_col + 1) - cell).max(1);
+                (cell, cursor_width)
+            });
         let scroll = match cursor_cell {
             None => 0,
-            Some(cell) => {
+            Some((cell, cursor_width)) => {
                 let scroll = self.h_scroll.get();
                 if cell < scroll {
                     cell
-                } else if cell >= scroll + width {
-                    cell + 1 - width
+                } else if cell + cursor_width > scroll + width {
+                    (cell + cursor_width).saturating_sub(width)
                 } else {
                     scroll
                 }
@@ -1691,6 +1704,7 @@ impl Component for CodePreview {
         // exact characters on one line, or one unbroken block from its first
         // character to its last across several (see `block_cells`).
         let code_x = code_area.x + self.gutter_width();
+        let code_right = code_area.right().saturating_sub(u16::from(self.scrollbar_in_pane()));
         let paint_cells = |buf: &mut Buffer, rows: &[(usize, usize, usize)], color: Color| {
             for &(row, from, to) in rows {
                 if row < offset || row - offset >= height {
@@ -1702,7 +1716,7 @@ impl Component for CodePreview {
                 for col in from..to {
                     let Ok(col) = u16::try_from(col - h_scroll) else { break };
                     let x = code_x.saturating_add(col);
-                    if x >= code_area.right().saturating_sub(1) {
+                    if x >= code_right {
                         break;
                     }
                     if let Some(cell) = buf.cell_mut((x, y)) {
@@ -2358,6 +2372,38 @@ mod tests {
         assert_eq!(text(1), " ab");
         assert_eq!(text(2), "ab");
         assert_eq!(text(3), "b");
+    }
+
+    #[test]
+    fn a_wide_char_under_the_cursor_scrolls_fully_into_view() {
+        let line = "a".repeat(30) + "界";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        let width = preview.content_width();
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert_eq!(preview.h_scroll.get(), 32 - width, "both cells of `界` fit");
+        let x = preview.gutter_width() + (width - 2) as u16;
+        assert_eq!(buf.cell((x, 0)).unwrap().symbol(), "界", "{:?}", row_text(&buf, 0));
+        assert!(cell_reversed(&buf, x, 0));
+    }
+
+    #[test]
+    fn the_visual_selection_reaches_the_last_column_without_a_scrollbar() {
+        let line = "a".repeat(40);
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(!preview.scrollbar_in_pane());
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        let bg = buf.cell((19, 0)).unwrap().style().bg;
+        assert_eq!(bg, Some(crate::theme::VISUAL_BG), "last cell is selected");
     }
 
     #[test]
