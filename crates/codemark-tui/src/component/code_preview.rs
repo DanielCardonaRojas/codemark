@@ -99,6 +99,11 @@ pub struct CodePreview {
     extension: String,
     /// Vertical scroll offset
     scroll_offset: Cell<u16>,
+    /// Horizontal scroll offset of the code content, in terminal cells. Follows
+    /// the column cursor so it stays on screen on lines wider than the pane;
+    /// 0 without a column cursor. Updated at render time, when the width is
+    /// known.
+    h_scroll: Cell<usize>,
     /// Currently highlighted line (0-indexed). Doubles as the cursor's row when
     /// the preview is focused.
     selected_line: Option<usize>,
@@ -194,6 +199,7 @@ impl CodePreview {
             code,
             extension,
             scroll_offset: Cell::new(0),
+            h_scroll: Cell::new(0),
             selected_line: None,
             cursor_col: 0,
             selected_range: None,
@@ -267,6 +273,7 @@ impl CodePreview {
         self.inline.cursor_on = None;
         self.invalidate_layout();
         self.scroll_offset.set(0);
+        self.h_scroll.set(0);
         self.selected_line = None;
         self.cursor_col = 0;
         self.selection_mode = false;
@@ -499,29 +506,58 @@ impl CodePreview {
     /// Width available for code content within the last rendered area, i.e. the
     /// pane width minus the gutter and the scrollbar (when one is shown).
     fn content_width(&self) -> usize {
-        let area = self.last_area.get();
-        let height = area.height as usize;
-        let scrollbar = if self.total_rows() > height { 1 } else { 0 };
-        (area.width as usize).saturating_sub(self.gutter_width() as usize + scrollbar)
+        let scrollbar = usize::from(self.scrollbar_in_pane());
+        (self.last_area.get().width as usize)
+            .saturating_sub(self.gutter_width() as usize + scrollbar)
     }
 
-    /// The furthest column the cursor may occupy on `line_idx`: clamped to both
-    /// the line length and the visible content width so the cursor stays on
-    /// screen (there is no horizontal scroll yet).
-    ///
-    /// Before the first render `last_area` is unset (0×0), so `content_width()`
-    /// is 0; in that case bound only by the line length rather than pinning the
-    /// cursor to column 0 until a frame establishes the viewport.
+    /// Whether [`Self::render_scrollbar`] draws in the code pane's last
+    /// column. Beside the code it sits at the side list's edge instead.
+    fn scrollbar_in_pane(&self) -> bool {
+        let height = self.last_area.get().height as usize;
+        !self.rail_shown() && !self.code.is_empty() && height > 0 && self.scroll_rows() > height
+    }
+
+    /// The furthest column the cursor may occupy on `line_idx`: just past its
+    /// last character. Lines wider than the pane scroll horizontally to keep
+    /// the cursor on screen (see [`Self::follow_cursor_horizontally`]).
     fn max_cursor_col(&self, line_idx: usize) -> usize {
-        let line_len = self.line_char_len(line_idx);
-        let width = match self.content_width() {
-            0 => return line_len,
-            width => width,
+        self.line_char_len(line_idx)
+    }
+
+    /// Adjust [`Self::h_scroll`] so the column cursor's cell sits inside the
+    /// `width`-cell content area, scrolling as little as possible. Without a
+    /// column cursor the view returns to the start of the lines.
+    fn follow_cursor_horizontally(&self, width: usize) -> usize {
+        let cursor_cell = self
+            .selected_line
+            .filter(|_| self.selection_mode && self.focused && width > 0)
+            .map(|line| {
+                let text = self.code.lines().nth(line).unwrap_or("");
+                let cell = cells_before(text, self.cursor_col);
+                // A wide character needs both its cells on screen; past the
+                // line's end the cursor takes one.
+                let cursor_width = (cells_before(text, self.cursor_col + 1) - cell).max(1);
+                (cell, cursor_width)
+            });
+        let scroll = match cursor_cell {
+            None => 0,
+            Some((cell, cursor_width)) => {
+                let scroll = self.h_scroll.get();
+                if cell < scroll {
+                    cell
+                } else if cell + cursor_width > scroll + width {
+                    (cell + cursor_width).saturating_sub(width)
+                } else {
+                    scroll
+                }
+            }
         };
-        // The cursor is drawn at `cells_before` its column (`界` takes two
-        // cells), so allow the furthest column drawn inside the pane.
-        let text = self.code.lines().nth(line_idx).unwrap_or("");
-        (0..=line_len).take_while(|&col| cells_before(text, col) < width).last().unwrap_or(0)
+        if scroll != self.h_scroll.get() {
+            tracing::trace!(target: "codemark::ui", scroll, width, "code preview horizontal scroll");
+            self.h_scroll.set(scroll);
+        }
+        scroll
     }
 
     /// Clamp `cursor_col` to the current line after a vertical move.
@@ -1540,6 +1576,7 @@ impl Component for CodePreview {
         let focused_thread = self.focused_thread();
         let gutter = self.gutter_width() as usize;
         let row_width = code_area.width as usize;
+        let h_scroll = self.follow_cursor_horizontally(self.content_width());
 
         // Comment sign per line with threads under it: `▾` while any is
         // expanded, `▸` when all are folded.
@@ -1584,7 +1621,9 @@ impl Component for CodePreview {
                         Some(false) => Span::styled("▸", Style::default().fg(palette.accent)),
                         None => Span::raw(" "),
                     });
-                    new_spans.extend(line.spans.iter().skip(3).cloned());
+                    // Span 3 is the gutter's separator: only code scrolls.
+                    new_spans.extend(line.spans.get(3).cloned());
+                    new_spans.extend(skip_cells(line.spans.iter().skip(4), h_scroll));
                     text_lines.push(Line::from(new_spans));
                 }
                 DisplayRow::Bubble { thread, row } => {
@@ -1665,15 +1704,19 @@ impl Component for CodePreview {
         // exact characters on one line, or one unbroken block from its first
         // character to its last across several (see `block_cells`).
         let code_x = code_area.x + self.gutter_width();
+        let code_right = code_area.right().saturating_sub(u16::from(self.scrollbar_in_pane()));
         let paint_cells = |buf: &mut Buffer, rows: &[(usize, usize, usize)], color: Color| {
             for &(row, from, to) in rows {
                 if row < offset || row - offset >= height {
                     continue;
                 }
                 let y = code_area.y + (row - offset) as u16;
-                for col in from..to.max(from + 1) {
-                    let x = code_x + col as u16;
-                    if x >= code_area.right().saturating_sub(1) {
+                // Cells scrolled off the left edge are not drawn.
+                let (from, to) = (from.max(h_scroll), to.max(from + 1).max(h_scroll));
+                for col in from..to {
+                    let Ok(col) = u16::try_from(col - h_scroll) else { break };
+                    let x = code_x.saturating_add(col);
+                    if x >= code_right {
                         break;
                     }
                     if let Some(cell) = buf.cell_mut((x, y)) {
@@ -1696,7 +1739,8 @@ impl Component for CodePreview {
             let screen_row = (row - offset) as u16;
             // Terminal cells, like the selection: `界` takes two.
             let line = self.code.lines().nth(self.selected_line.unwrap_or(0)).unwrap_or("");
-            let x = code_area.x + self.gutter_width() + cells_before(line, self.cursor_col) as u16;
+            let cell = cells_before(line, self.cursor_col).saturating_sub(h_scroll);
+            let x = code_area.x + self.gutter_width() + cell as u16;
             if screen_row < code_area.height && x < code_area.right() {
                 let y = code_area.y + screen_row;
                 if let Some(cell) = buf.cell_mut((x, y)) {
@@ -1757,6 +1801,46 @@ fn char_class(c: char) -> CharClass {
 fn cells_before(text: &str, col: usize) -> usize {
     let end = text.char_indices().nth(col).map_or(text.len(), |(i, _)| i);
     unicode_width::UnicodeWidthStr::width(&text[..end])
+}
+
+/// `spans` with their first `cells` terminal cells dropped, for drawing a
+/// horizontally scrolled line. Steps over whole graphemes, so a joined emoji
+/// counts as the two cells [`cells_before`] gives it. A wide grapheme cut by
+/// the left edge becomes spaces so the rest of the line keeps its columns.
+fn skip_cells<'a>(
+    spans: impl Iterator<Item = &'a Span<'static>>,
+    cells: usize,
+) -> Vec<Span<'static>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let spans: Vec<&Span<'static>> = spans.collect();
+    if cells == 0 {
+        return spans.into_iter().cloned().collect();
+    }
+    let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+    // Byte offset where the kept text starts, and the cells it overshoots by.
+    let mut skipped = 0;
+    let mut cut = text.len();
+    for (i, g) in text.grapheme_indices(true) {
+        if skipped >= cells {
+            cut = i;
+            break;
+        }
+        skipped += unicode_width::UnicodeWidthStr::width(g);
+    }
+    // Pad goes on the first kept span, in its style.
+    let mut pad = skipped.saturating_sub(cells);
+    let mut out = Vec::new();
+    let mut start = 0;
+    for span in spans {
+        let end = start + span.content.len();
+        if end > cut {
+            let mut kept = " ".repeat(std::mem::take(&mut pad));
+            kept.push_str(&span.content[cut.max(start) - start..]);
+            out.push(Span::styled(kept, span.style));
+        }
+        start = end;
+    }
+    out
 }
 
 /// The span from `(line, col)` to `(line, col)` (end exclusive, columns in
@@ -2222,23 +2306,120 @@ mod tests {
     }
 
     #[test]
-    fn cursor_stops_at_the_pane_edge_on_wide_text() {
-        let mut preview = CodePreview::new("界界界界界ABCDE\n", "txt");
+    fn cursor_scrolls_the_view_past_the_pane_edge_on_wide_text() {
+        let line = "界界界界界ABCDEFGHIJKLMNOP";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
         preview.set_focus(true);
         render_to_buffer(&preview, 20, 2);
         let width = preview.content_width();
         assert!(press(&mut preview, 'j'));
         preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
-        for _ in 0..12 {
+        for _ in 0..30 {
             press(&mut preview, 'l');
         }
-        let line = "界界界界界ABCDE";
-        let cells = unicode_width::UnicodeWidthStr::width(
-            line.chars().take(preview.cursor_col).collect::<String>().as_str(),
-        );
-        assert!(cells < width, "cursor cell {cells} is inside the {width}-cell pane");
+        assert_eq!(preview.cursor_col, line.chars().count(), "reaches the line's end");
         let buf = render_to_buffer(&preview, 20, 2);
-        assert!(cell_reversed(&buf, preview.gutter_width() + cells as u16, 0), "cursor drawn");
+        let cells = cells_before(line, preview.cursor_col);
+        let scroll = preview.h_scroll.get();
+        assert_eq!(scroll, cells + 1 - width, "scrolled just enough");
+        let x = preview.gutter_width() + (cells - scroll) as u16;
+        assert!(cell_reversed(&buf, x, 0), "cursor drawn at the right edge");
+        assert!(row_text(&buf, 0).contains("NOP"), "{:?}", row_text(&buf, 0));
+
+        // Back to the start scrolls the view back.
+        assert!(press(&mut preview, '0'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert_eq!(preview.h_scroll.get(), 0);
+        assert!(row_text(&buf, 0).contains("界 界"), "{:?}", row_text(&buf, 0));
+    }
+
+    #[test]
+    fn leaving_selection_mode_resets_the_horizontal_scroll() {
+        let line = "a".repeat(60) + "END";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert!(preview.h_scroll.get() > 0);
+        assert!(row_text(&buf, 0).contains("END"));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Esc));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert_eq!(preview.h_scroll.get(), 0);
+        assert!(!row_text(&buf, 0).contains("END"));
+    }
+
+    #[test]
+    fn skip_cells_pads_a_wide_char_cut_by_the_edge() {
+        let spans = [Span::raw("界x"), Span::raw("yz")];
+        let text = |n| {
+            skip_cells(spans.iter(), n).iter().map(|s| s.content.to_string()).collect::<String>()
+        };
+        assert_eq!(text(0), "界xyz");
+        assert_eq!(text(1), " xyz");
+        assert_eq!(text(2), "xyz");
+        assert_eq!(text(4), "z");
+
+        // A joined emoji is one two-cell grapheme, as `cells_before` has it.
+        let family = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
+        let spans = [Span::raw(format!("{family}ab"))];
+        let text = |n| {
+            skip_cells(spans.iter(), n).iter().map(|s| s.content.to_string()).collect::<String>()
+        };
+        assert_eq!(cells_before(family, family.chars().count()), 2);
+        assert_eq!(text(1), " ab");
+        assert_eq!(text(2), "ab");
+        assert_eq!(text(3), "b");
+    }
+
+    #[test]
+    fn a_wide_char_under_the_cursor_scrolls_fully_into_view() {
+        let line = "a".repeat(30) + "界";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        let width = preview.content_width();
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert_eq!(preview.h_scroll.get(), 32 - width, "both cells of `界` fit");
+        let x = preview.gutter_width() + (width - 2) as u16;
+        assert_eq!(buf.cell((x, 0)).unwrap().symbol(), "界", "{:?}", row_text(&buf, 0));
+        assert!(cell_reversed(&buf, x, 0));
+    }
+
+    #[test]
+    fn the_visual_selection_reaches_the_last_column_without_a_scrollbar() {
+        let line = "a".repeat(40);
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(!preview.scrollbar_in_pane());
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        let bg = buf.cell((19, 0)).unwrap().style().bg;
+        assert_eq!(bg, Some(crate::theme::VISUAL_BG), "last cell is selected");
+    }
+
+    #[test]
+    fn scrolling_keeps_the_gutter_separator() {
+        let line = "x".repeat(60) + "END";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        assert!(press(&mut preview, '$'));
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert!(preview.h_scroll.get() > 0);
+        let separator = preview.gutter_width() - 1;
+        assert_eq!(buf.cell((separator, 0)).unwrap().symbol(), " ", "{:?}", row_text(&buf, 0));
+        assert_eq!(buf.cell((separator + 1, 0)).unwrap().symbol(), "x");
     }
 
     #[test]
