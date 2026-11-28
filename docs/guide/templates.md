@@ -102,7 +102,8 @@ the bookmark templates:
 
 Loops: <code v-pre>{{#each tags}}</code> (each <code v-pre>{{this}}</code>), <code v-pre>{{#each links}}</code> (each <code v-pre>{{kind}}</code>,
 <code v-pre>{{label}}</code>, <code v-pre>{{url}}</code>), and <code v-pre>{{#each steps}}</code> (each <code v-pre>{{index}}</code>, <code v-pre>{{file_path}}</code>,
-<code v-pre>{{file_name}}</code>, <code v-pre>{{language}}</code>, <code v-pre>{{summary}}</code>).
+<code v-pre>{{file_name}}</code>, <code v-pre>{{language}}</code>, <code v-pre>{{summary}}</code>, <code v-pre>{{comment_count}}</code>,
+<code v-pre>{{comments_label}}</code>, and the <code v-pre>{{#each comments}}</code> threads).
 
 ### Custom Helpers
 

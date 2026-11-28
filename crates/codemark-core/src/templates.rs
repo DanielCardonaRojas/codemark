@@ -414,6 +414,12 @@ pub struct CollectionStepTemplateContext {
     /// `anchor_hint` naming the code they point at.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<CommentTemplateContext>,
+    /// Number of comments (roots and replies) on the step.
+    pub comment_count: usize,
+    /// Pluralized count for display (`1 comment`, `3 comments`); absent when
+    /// the step has no comments.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comments_label: Option<String>,
 }
 
 /// Prefix every line of `text` with `>` so a multi-paragraph string renders as
@@ -493,6 +499,12 @@ impl CollectionStepTemplateContext {
             summary,
             note,
             comments: CommentTemplateContext::threaded(&bm.comments),
+            comment_count: bm.comments.len(),
+            comments_label: match bm.comments.len() {
+                0 => None,
+                1 => Some("1 comment".to_string()),
+                n => Some(format!("{n} comments")),
+            },
         }
     }
 }
@@ -1153,7 +1165,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_overview_keeps_multi_line_comments_inside_their_step() {
+    fn collection_overview_shows_comment_count_not_bodies() {
         use crate::engine::bookmark::{Annotation, Collection, CollectionHealth, Visibility};
 
         let collection = Collection {
@@ -1225,9 +1237,11 @@ mod tests {
             &[],
         )
         .unwrap();
+        assert!(output.contains("`login.rs`"), "{output}");
+        assert!(output.contains(" · *1 comment*\n"), "the step shows a comment count:\n{output}");
         assert!(
-            output.contains("    - *claude* (originally on `L3-L3: login()`): First paragraph.\n      \n      Second paragraph.\n      - a list item"),
-            "every body line stays indented under the step:\n{output}"
+            !output.contains("First paragraph"),
+            "comment bodies stay out of the steps:\n{output}"
         );
     }
 

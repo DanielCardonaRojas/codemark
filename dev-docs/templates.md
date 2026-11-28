@@ -101,7 +101,8 @@ the bookmark templates:
 
 Loops: `{{#each tags}}` (each `{{this}}`), `{{#each links}}` (each `{{kind}}`,
 `{{label}}`, `{{url}}`), and `{{#each steps}}` (each `{{index}}`, `{{file_path}}`,
-`{{file_name}}`, `{{language}}`, `{{summary}}`).
+`{{file_name}}`, `{{language}}`, `{{summary}}`, `{{comment_count}}`, `{{comments_label}}`,
+and the `{{#each comments}}` threads).
 
 ### Custom Helpers
 

@@ -50,9 +50,6 @@
 ## Steps
 
 {{#each steps}}
-- **{{index}}.** `{{file_name}}`{{#if summary}} — {{summary}}{{/if}}
-{{#each comments}}
-    - {{#if parent_id}}↳ {{/if}}*{{author}}*{{#if anchor_hint}} (originally on {{code_span anchor_hint}}){{/if}}: {{body_nested}}
-{{/each}}
+- **{{index}}.** `{{file_name}}`{{#if summary}} — {{summary}}{{/if}}{{#if comments_label}} · *{{comments_label}}*{{/if}}
 {{/each}}
 {{/if}}
