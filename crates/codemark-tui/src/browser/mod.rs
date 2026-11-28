@@ -3171,7 +3171,9 @@ impl BrowserLayout {
     /// column to move to: the single-column (stacked) layout, or already on
     /// that side.
     pub fn focus_column(&mut self, right: bool) -> bool {
-        if self.stacked.get() {
+        // Portrait is one column even when a section is fullscreen (which
+        // leaves `stacked` unset), so check the layout, not the render mode.
+        if self.is_portrait() {
             return false;
         }
         let on_left_list = matches!(
@@ -3181,6 +3183,13 @@ impl BrowserLayout {
         match (right, self.focus) {
             (true, _) if on_left_list => {
                 self.focus = FocusArea::Main;
+                // An overview hides the details, so a remembered Details (or
+                // comment list) section isn't drawn: land on the overview.
+                if self.right_pane.overview_active
+                    && self.right_pane.focused != RightPaneFocus::Steps
+                {
+                    self.right_pane.focus_steps();
+                }
                 tracing::debug!(
                     target: "codemark::ui",
                     section = ?self.right_pane.focused,
@@ -3827,6 +3836,30 @@ mod tests {
         render_at(&layout, 80, 30);
         press(&mut layout, KeyCode::Right);
         assert_eq!(layout.focus, FocusArea::ContentPanel, "one column: nowhere to go");
+
+        // Still one column with the list fullscreen (no longer "stacked").
+        layout.set_left_pane_size(LeftPaneSize::Full);
+        render_at(&layout, 80, 30);
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::ContentPanel, "fullscreen portrait: still none");
+        assert_eq!(layout.left_pane_size, LeftPaneSize::Full, "and the list stays fullscreen");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arrow_into_an_overview_lands_on_it_not_the_hidden_details() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Landscape);
+        render_at(&layout, 140, 40);
+        assert!(layout.right_pane.overview_active, "the collection list previews its overview");
+
+        // Details remembered from an earlier visit, now hidden by the overview.
+        layout.right_pane.focus_details();
+        layout.set_focus(FocusArea::ContentPanel);
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+        assert!(layout.right_pane.overview.focused(), "the visible overview holds focus");
+        assert!(!layout.right_pane.details.focused);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -32,9 +32,9 @@ impl BrowserLayout {
             ("[", "Previous tab"),
             ("]", "Next tab"),
         ];
-        // Mirrors `focus_column`: two columns, and neither the search bar nor
+        // Mirrors `focus_column`: two columns (landscape), and neither the search bar nor
         // the filter input, whose arrows move the text cursor.
-        if !self.stacked.get() && !matches!(self.focus, FocusArea::Search | FocusArea::Filter) {
+        if !self.is_portrait() && !matches!(self.focus, FocusArea::Search | FocusArea::Filter) {
             bindings.push(("←/→", "Switch column"));
         }
 
