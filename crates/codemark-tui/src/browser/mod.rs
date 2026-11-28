@@ -14,7 +14,7 @@ mod left_pane;
 mod right_pane;
 mod search;
 mod tabbed_panel;
-mod tabs;
+pub(crate) mod tabs;
 mod text_area;
 mod transfer;
 mod types;
@@ -154,6 +154,9 @@ pub struct BrowserLayout {
     focus: FocusArea,
     /// Previous focus area before entering filter mode
     previous_focus: Option<FocusArea>,
+    /// The left column's last focused list panel, which `←` returns to from
+    /// the right column (the right pane remembers its own section).
+    last_left_focus: FocusArea,
     /// Pending external command to be executed
     pending_command: Option<ExternalCommand>,
     /// Pending heal notification to be displayed
@@ -392,6 +395,7 @@ impl BrowserLayout {
             tab_order,
             focus: initial_focus,
             previous_focus: None,
+            last_left_focus: FocusArea::ContentPanel,
             workspace,
             registry,
             pending_command: None,
@@ -3161,6 +3165,58 @@ impl BrowserLayout {
         true
     }
 
+    /// `←`/`→`: move focus to the other column, landing on the panel it last
+    /// had focused (the right pane keeps its section; the left column returns
+    /// to [`Self::last_left_focus`]). Returns `false` where there's no other
+    /// column to move to: the single-column (stacked) layout, or already on
+    /// that side.
+    pub fn focus_column(&mut self, right: bool) -> bool {
+        // Portrait is one column even when a section is fullscreen (which
+        // leaves `stacked` unset), so check the layout, not the render mode.
+        if self.is_portrait() {
+            return false;
+        }
+        let on_left_list = matches!(
+            self.focus,
+            FocusArea::ContextPanel | FocusArea::FiltersPanel | FocusArea::ContentPanel
+        );
+        match (right, self.focus) {
+            (true, _) if on_left_list => {
+                self.focus = FocusArea::Main;
+                // The remembered section may be hidden now (say an overview
+                // replaced the steps): fall back to one that's drawn.
+                self.right_pane.ensure_visible_focus();
+                tracing::debug!(
+                    target: "codemark::ui",
+                    section = ?self.right_pane.focused,
+                    "focus right column"
+                );
+                self.update_focus_state();
+                true
+            }
+            (false, FocusArea::Main) => {
+                // An expanded left pane draws only some panels: fall back to
+                // the content list when the remembered one isn't drawn.
+                let cycle = self.left_pane_focus_cycle();
+                self.focus = if cycle.contains(&self.last_left_focus) {
+                    self.last_left_focus
+                } else {
+                    FocusArea::ContentPanel
+                };
+                tracing::debug!(target: "codemark::ui", focus = ?self.focus, "focus left column");
+                // Back on the list, re-preview only if the selection moved
+                // while away (as the stacked Tab walk does), so returning to an
+                // entered collection doesn't swap its steps for the overview.
+                let refresh = self.focus == FocusArea::ContentPanel
+                    && self.content_selection() != self.previewed_selection;
+                self.update_focus_state_with(refresh);
+                true
+            }
+            // Already on that side, or in the search bar / filter input.
+            _ => false,
+        }
+    }
+
     /// Cycle to the next focusable area within the current pane.
     pub fn next_focus(&mut self) {
         if self.cycle_stacked_focus(true) {
@@ -3222,6 +3278,13 @@ impl BrowserLayout {
         // This keeps panes visually inactive while the user is typing in the filter bar at the bottom
         if self.focus == FocusArea::Filter {
             return;
+        }
+
+        if matches!(
+            self.focus,
+            FocusArea::ContextPanel | FocusArea::FiltersPanel | FocusArea::ContentPanel
+        ) {
+            self.last_left_focus = self.focus;
         }
 
         // Moving focus to the preview pane restores the left pane to its
@@ -3724,6 +3787,110 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arrows_move_between_columns_and_each_recalls_its_panel() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = content_layout(LayoutMode::Landscape, ContentTab::Bookmarks);
+        render_at(&layout, 140, 40);
+
+        // The left column remembers its last list (Tags here)...
+        layout.set_focus(FocusArea::FiltersPanel);
+        // ...and the right column its section (the details).
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main);
+        layout.right_pane.focus_details();
+        render_at(&layout, 140, 40);
+
+        press(&mut layout, KeyCode::Left);
+        assert_eq!(layout.focus, FocusArea::FiltersPanel, "back to the left column's panel");
+        press(&mut layout, KeyCode::Left);
+        assert_eq!(layout.focus, FocusArea::FiltersPanel, "no column further left");
+
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Details, "back to the details");
+        assert!(layout.right_pane.details.focused, "and it holds focus");
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main, "no column further right");
+        let switch = |layout: &BrowserLayout| {
+            layout.get_help_bindings().iter().any(|&(key, _)| key == "←/→")
+        };
+        assert!(switch(&layout), "the help lists column switching");
+        layout.set_focus(FocusArea::Search);
+        assert!(!switch(&layout), "not while the arrows edit the query");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arrows_leave_the_search_bar_and_the_stacked_column_alone() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = content_layout(LayoutMode::Landscape, ContentTab::Bookmarks);
+        render_at(&layout, 140, 40);
+        layout.set_focus(FocusArea::Search);
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Search, "the arrows move the text cursor");
+
+        let mut layout = content_layout(LayoutMode::Portrait, ContentTab::Bookmarks);
+        render_at(&layout, 80, 30);
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::ContentPanel, "one column: nowhere to go");
+
+        // Still one column with the list fullscreen (no longer "stacked").
+        layout.set_left_pane_size(LeftPaneSize::Full);
+        render_at(&layout, 80, 30);
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::ContentPanel, "fullscreen portrait: still none");
+        assert_eq!(layout.left_pane_size, LeftPaneSize::Full, "and the list stays fullscreen");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arrow_back_after_moving_to_another_collection_focuses_its_overview() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Landscape);
+        let db = layout.workspace.focus_db();
+        db.insert_collection(&e2e_collection("col-other", "OtherTour")).expect("seed collection");
+        db.add_to_collection("col-other", &["bm-enter".to_string()]).expect("populate");
+        layout.update_tours_collections();
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 140, 40);
+
+        // Enter a collection and focus its details.
+        press(&mut layout, KeyCode::Enter);
+        assert!(!layout.right_pane.overview_active, "entered: steps and details");
+        press(&mut layout, KeyCode::Right);
+        layout.right_pane.focus_details();
+        layout.update_focus_state();
+        render_at(&layout, 140, 40);
+
+        // Back to the list, onto another collection: its overview hides the details.
+        press(&mut layout, KeyCode::Left);
+        assert_eq!(layout.focus, FocusArea::ContentPanel);
+        press(&mut layout, KeyCode::Char('j'));
+        render_at(&layout, 140, 40);
+        assert!(layout.right_pane.overview_active, "the other collection's overview");
+
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert!(layout.right_pane.overview.focused(), "lands on the visible overview");
+        assert!(!layout.right_pane.details.focused, "not the hidden details");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arrow_into_an_overview_lands_on_it_not_the_hidden_details() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Landscape);
+        render_at(&layout, 140, 40);
+        assert!(layout.right_pane.overview_active, "the collection list previews its overview");
+
+        // Details remembered from an earlier visit, now hidden by the overview.
+        layout.right_pane.focus_details();
+        layout.set_focus(FocusArea::ContentPanel);
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert_eq!(layout.right_pane.focused, RightPaneFocus::Steps);
+        assert!(layout.right_pane.overview.focused(), "the visible overview holds focus");
+        assert!(!layout.right_pane.details.focused);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stacked_tab_round_the_column_keeps_a_navigated_to_collection_entered() {
         use ratatui::crossterm::event::KeyCode;
         let mut layout = collection_layout(LayoutMode::Portrait);
@@ -4099,7 +4266,8 @@ mod tests {
         };
         // The frame's bottom border is the first row closing it.
         let frame_bottom = |buf: &Buffer| -> u16 {
-            (1..area.height).find(|&y| row(buf, y).contains('╯')).expect("frame closes")
+            // Heavy while focused, rounded otherwise.
+            (1..area.height).find(|&y| row(buf, y).contains(['╯', '┛'])).expect("frame closes")
         };
 
         // j / k pick threads from the side panel.
@@ -4122,9 +4290,9 @@ mod tests {
         let top = row(&buf, 0);
         assert!(top.contains("Steps"), "{top}");
         assert!(!top.contains("Comments") && !top.contains("Details"), "{top}");
-        assert_eq!(top.matches('╮').count(), 1, "one frame: {top}");
+        assert_eq!(top.matches('┓').count(), 1, "one (focused) frame: {top}");
         let plain = row(&buf, 1);
-        assert_eq!(plain.matches('│').count(), 2, "only the frame's sides: {plain}");
+        assert_eq!(plain.matches('┃').count(), 2, "only the frame's sides: {plain}");
         let details_top = row(&buf, bottom + 1);
         assert!(details_top.contains("Details"), "{details_top}");
         assert!(!details_top.contains("Comments"), "comments are the list: {details_top}");

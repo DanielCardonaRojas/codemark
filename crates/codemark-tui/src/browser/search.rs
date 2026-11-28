@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{BorderType, Paragraph, Widget},
+    widgets::{Paragraph, Widget},
 };
 
 use crate::component::Component;
@@ -309,7 +309,7 @@ impl Component for SearchBar {
         };
 
         let block = ratatui::widgets::Block::bordered()
-            .border_type(BorderType::Rounded)
+            .border_type(crate::browser::tabs::frame_border_type(self.focused))
             .border_style(border_style)
             .borders(ratatui::widgets::Borders::ALL);
 
@@ -479,6 +479,20 @@ mod tests {
         bar.render_collapsed(area, &mut buf);
         let row: String = (0..60).map(|x| buf[(x, 0)].symbol().to_string()).collect();
         assert!(row.contains("index unavailable"), "error shown on the collapsed row: {row}");
+    }
+
+    #[test]
+    fn focused_bar_draws_a_heavy_frame() {
+        let mut bar = SearchBar::new();
+        let area = Rect::new(0, 0, 40, 3);
+        let corner = |bar: &SearchBar| {
+            let mut buf = Buffer::empty(area);
+            bar.render(area, &mut buf);
+            buf[(0, 0)].symbol().to_string()
+        };
+        assert_eq!(corner(&bar), "╭", "rounded while unfocused");
+        bar.set_focus(true);
+        assert_eq!(corner(&bar), "┏", "heavy like the other focused panes");
     }
 
     #[test]

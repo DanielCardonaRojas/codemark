@@ -25,7 +25,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Widget};
+use ratatui::widgets::{Block, Clear, Widget};
 use std::path::{Path, PathBuf};
 
 use super::{BrowserLayout, ConfirmDialog, ContentTab, DialogAction, HealNotification};
@@ -567,7 +567,7 @@ fn render_picker(picker: &BranchPicker, area: Rect, buf: &mut Buffer) {
     };
     Widget::render(Clear, popup, buf);
     let block = Block::bordered()
-        .border_type(BorderType::Rounded)
+        .border_type(crate::browser::tabs::popup_border_type())
         .title(format!(" {} \"{}\" to branch ", picker.kind.verb(), picker.collection_name))
         .title_style(Style::default().bold())
         .border_style(Style::default().fg(palette.accent));
@@ -702,6 +702,21 @@ mod tests {
             pinned,
             last_commit: 0,
         }
+    }
+
+    #[test]
+    fn the_picker_popup_has_the_focused_heavy_frame() {
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render_picker(&picker(), area, &mut buf);
+        let corners: String = (0..area.height)
+            .flat_map(|y| (0..area.width).map(move |x| (x, y)))
+            .filter_map(|p| {
+                let sym = buf[p].symbol();
+                matches!(sym, "┏" | "╭").then(|| sym.to_string())
+            })
+            .collect();
+        assert_eq!(corners, "┏", "one heavy top-left corner, no rounded one");
     }
 
     fn picker() -> BranchPicker {

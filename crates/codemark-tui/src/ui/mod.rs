@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap},
+    widgets::{Block, Clear, Paragraph, Widget, Wrap},
 };
 
 use crate::state::{AppMode, AppState};
@@ -394,7 +394,7 @@ pub fn render_confirmation(
     Widget::render(Clear, dialog_area, buf);
 
     let block = Block::bordered()
-        .border_type(BorderType::Rounded)
+        .border_type(crate::browser::tabs::popup_border_type())
         .title(title.to_string())
         .title_style(Style::default().bold())
         .border_style(Style::default().fg(crate::theme::palette().error));
@@ -444,6 +444,7 @@ pub fn render_popup(area: Rect, buf: &mut Buffer, title: &str, content: &Text) {
     let paragraph = Paragraph::new(content.clone())
         .block(
             Block::bordered()
+                .border_type(crate::browser::tabs::popup_border_type())
                 .title(title)
                 .title_style(Style::default().bold())
                 .border_style(Style::default().fg(crate::theme::palette().emphasis)),

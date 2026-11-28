@@ -14,7 +14,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
-    widgets::{Block, BorderType, Widget},
+    widgets::{Block, Widget},
 };
 use std::collections::HashMap;
 
@@ -1935,11 +1935,8 @@ impl RightPane {
         ];
         let frame = SPINNER_FRAMES[self.loading_tick % SPINNER_FRAMES.len()];
 
-        let border_color = if self.focused == RightPaneFocus::Steps {
-            crate::theme::palette().accent
-        } else {
-            crate::theme::palette().dim
-        };
+        // Stands in for the steps panel, so it borrows its focus state.
+        let border_color = crate::theme::palette().border(self.steps.focused, self.steps.linked);
         let border_style = Style::default().fg(border_color);
         let mut title = ratatui::text::Line::from(vec![
             ratatui::text::Span::raw("  "),
@@ -1952,7 +1949,7 @@ impl RightPane {
         let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
         title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
-            .border_type(BorderType::Rounded)
+            .border_type(crate::browser::tabs::frame_border_type(self.steps.focused))
             .title(title)
             .border_style(border_style);
         let inner = block.inner(area);
@@ -1965,7 +1962,7 @@ impl RightPane {
             if x < area.right()
                 && let Some(cell) = buf.cell_mut((x, y))
             {
-                cell.set_char('─');
+                cell.set_char(crate::browser::tabs::frame_horizontal(self.steps.focused));
                 cell.set_style(border_style);
             }
         }
@@ -2009,11 +2006,11 @@ impl RightPane {
     /// Mirrors the steps tabbed panel's framing so the live collection overview
     /// occupies the same main area while browsing collections.
     fn render_overview_block(&self, area: Rect, buf: &mut Buffer) {
-        let border_color = if self.focused == RightPaneFocus::Steps {
-            crate::theme::palette().accent
-        } else {
-            crate::theme::palette().dim
-        };
+        // `self.focused` only names the right pane's *internal* focus (it stays
+        // `Steps` while the collection list holds focus), so read the panel's
+        // own focus. Unfocused, the overview still follows the list and scrolls
+        // with `J`/`K`, so it's drawn as linked rather than dim.
+        let border_color = crate::theme::palette().border(self.overview.focused(), true);
         let border_style = Style::default().fg(border_color);
 
         let mut title = ratatui::text::Line::from(vec![
@@ -2027,7 +2024,7 @@ impl RightPane {
         let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
         title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
-            .border_type(BorderType::Rounded)
+            .border_type(crate::browser::tabs::frame_border_type(self.overview.focused()))
             .title(title)
             .border_style(border_style);
 
@@ -2041,7 +2038,7 @@ impl RightPane {
             if x < area.right()
                 && let Some(cell) = buf.cell_mut((x, y))
             {
-                cell.set_char('─');
+                cell.set_char(crate::browser::tabs::frame_horizontal(self.overview.focused()));
                 cell.set_style(border_style);
             }
         }
@@ -2076,6 +2073,22 @@ impl RightPane {
         // tab switch that hid it must not leave focus on it either.
         self.leave_hidden_comments();
         handled
+    }
+
+    /// Fall back to the preview (or overview) when the remembered section
+    /// isn't drawn: an overview hides the details and the comment list, and
+    /// the list also hides with the Info/Query tabs or a narrow layout. Used
+    /// when focus returns to this pane, so it never lands on a hidden panel.
+    pub fn ensure_visible_focus(&mut self) {
+        if self.overview_active && self.focused != RightPaneFocus::Steps {
+            tracing::debug!(
+                target: "codemark::ui",
+                section = ?self.focused,
+                "section hidden by the overview; focusing the overview"
+            );
+            self.focus_steps();
+        }
+        self.leave_hidden_comments();
     }
 
     /// Move focus to the preview when the focused comment list isn't drawn.
@@ -2182,17 +2195,16 @@ impl RightPane {
         // Handle navigation within right pane if not handled by components
         if let Event::Key(key) = event {
             match key.code {
-                // Left/right navigation works for both Steps and Details focus
-                ratatui::crossterm::event::KeyCode::Left
-                | ratatui::crossterm::event::KeyCode::Char('h') => {
+                // h/l page the steps from either section; the arrows are
+                // left to the layout, which moves between columns with them.
+                ratatui::crossterm::event::KeyCode::Char('h') => {
                     if self.pager_current > 0 {
                         self.pager_current = self.pager_current.saturating_sub(1);
                         self.needs_preview_update = true;
                     }
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Right
-                | ratatui::crossterm::event::KeyCode::Char('l') => {
+                ratatui::crossterm::event::KeyCode::Char('l') => {
                     if self.pager_current + 1 < self.pager_total {
                         self.pager_current += 1;
                         self.needs_preview_update = true;
@@ -2708,5 +2720,33 @@ mod tests {
         // pre-pull value, and the pane must now be anchored to the new id.
         assert_eq!(pane.active_collection_id.as_deref(), Some("col-2"));
         assert_eq!(pane.overview_health, Some(crate::component::HealthStatus::Healthy));
+    }
+
+    /// The overview's top-left border cell color after rendering `pane`.
+    fn overview_border_color(pane: &RightPane) -> ratatui::style::Color {
+        let area = Rect::new(0, 0, 60, 20);
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, RightPaneSize::default(), DetailsPaneSize::default());
+        buf[(0, 0)].fg
+    }
+
+    #[test]
+    fn overview_border_is_linked_not_focused_while_the_list_holds_focus() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_collection_overview(&db, "col-1");
+        let palette = crate::theme::palette();
+
+        // The right pane's internal focus stays on Steps while the collection
+        // list is focused: the overview must not draw as focused then.
+        pane.set_focus(false);
+        assert_eq!(pane.focused, RightPaneFocus::Steps);
+        assert_eq!(
+            overview_border_color(&pane),
+            palette.linked(),
+            "linked while the list is focused"
+        );
+
+        pane.set_focus(true);
+        assert_eq!(overview_border_color(&pane), palette.accent, "accent once focused");
     }
 }
