@@ -122,6 +122,34 @@ pub fn frame_border_type(focused: bool) -> ratatui::widgets::BorderType {
     }
 }
 
+thread_local! {
+    /// Set while the panes are drawn underneath an open modal popup.
+    static BEHIND_POPUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Render `draw` with the panes treated as sitting behind a modal popup when
+/// `behind` is set: [`frame_focus`] then reports every pane as neither focused
+/// nor linked, so only the popup wears the focused frame. Scopes nest, and an
+/// outer popup (e.g. settings) keeps the panes released through inner calls.
+pub fn render_behind_popup<R>(behind: bool, draw: impl FnOnce() -> R) -> R {
+    let previous = BEHIND_POPUP.with(|flag| flag.replace(flag.get() || behind));
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BEHIND_POPUP.with(|flag| flag.set(self.0));
+        }
+    }
+    let _restore = Restore(previous);
+    draw()
+}
+
+/// The `(focused, linked)` state a pane frame should be drawn with: the pane's
+/// own state, released to `(false, false)` while a modal popup holds focus
+/// (see [`render_behind_popup`]).
+pub fn frame_focus(focused: bool, linked: bool) -> (bool, bool) {
+    if BEHIND_POPUP.with(std::cell::Cell::get) { (false, false) } else { (focused, linked) }
+}
+
 /// Border type for a modal popup (settings, branch transfer, comment draft,
 /// dialogs): a popup holds focus while it's open, so it's always framed as a
 /// focused pane.
@@ -773,6 +801,19 @@ mod tests {
     }
 
     // @lat: [[tests#Content Tab Order#Default Order Preserves Stable Indices]]
+    #[test]
+    fn frame_focus_is_released_only_inside_a_popup_scope() {
+        assert_eq!(frame_focus(true, true), (true, true));
+        render_behind_popup(true, || {
+            assert_eq!(frame_focus(true, true), (false, false));
+            // An inner scope without a popup keeps the outer popup's release.
+            render_behind_popup(false, || assert_eq!(frame_focus(true, false), (false, false)));
+            assert_eq!(frame_focus(true, false), (false, false));
+        });
+        assert_eq!(frame_focus(true, true), (true, true), "the flag is restored on exit");
+        render_behind_popup(false, || assert_eq!(frame_focus(false, true), (false, true)));
+    }
+
     #[test]
     fn test_default_tab_order_matches_stable_indices() {
         // With no configuration, display position and stable index coincide —

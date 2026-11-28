@@ -258,7 +258,11 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
                 ])
                 .split(size);
 
-            layout.render(chunks[0], f.buffer_mut());
+            // The help and settings overlays hold focus while open, so the
+            // panes under them draw released.
+            crate::browser::tabs::render_behind_popup(show_keys || settings.is_visible(), || {
+                layout.render(chunks[0], f.buffer_mut())
+            });
 
             ui::render_status_bar(
                 chunks[1],

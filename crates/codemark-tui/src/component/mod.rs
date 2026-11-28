@@ -32,6 +32,7 @@ pub const SCROLLBAR_THUMB: &str = "▐";
 /// Style for a scrollbar thumb, matching the pane border: `accent` while its
 /// pane has focus, `dim` otherwise.
 pub fn scrollbar_style(focused: bool) -> Style {
+    let (focused, _) = crate::browser::tabs::frame_focus(focused, false);
     let palette = crate::theme::palette();
     Style::default().fg(if focused { palette.accent } else { palette.dim })
 }
