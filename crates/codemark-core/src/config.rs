@@ -814,7 +814,7 @@ impl Config {
 
     /// Load global config from `~/.config/codemark/config.toml`.
     /// Returns defaults if the file doesn't exist.
-    fn load_global() -> Self {
+    pub fn load_global() -> Self {
         let Some(config_dir) = global_config_dir() else {
             return Config::default();
         };

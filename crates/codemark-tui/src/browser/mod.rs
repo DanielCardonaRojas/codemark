@@ -2657,9 +2657,11 @@ impl BrowserLayout {
             return;
         };
 
-        // Layered for editor_types etc.; `open.repo` itself only ever comes from
-        // the global config (see `Config::merge`).
-        let config = Config::load_layered(&std::path::Path::new(&root).join(".codemark"));
+        // Global config only: `open.repo` is global-only (see `Config::merge`),
+        // and skipping the selected repo's own config keeps it from steering the
+        // opener (e.g. via `editor_types`) or printing a parse warning over the
+        // dashboard when it's malformed.
+        let config = Config::load_global();
 
         match config.open.build_repo_command(&root) {
             Some(cmd) => {
