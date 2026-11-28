@@ -3415,7 +3415,9 @@ impl BrowserLayout {
             .split(area);
 
         self.stacked.set(portrait && matches!(render_mode, RenderMode::Both));
-        match render_mode {
+        // A modal popup holds focus while it's open, so the panes under it draw
+        // released and only the popup wears the focused frame.
+        crate::browser::tabs::render_behind_popup(self.has_active_dialog(), || match render_mode {
             RenderMode::Both => {
                 self.left_pane.render_with(chunks[0], buf, portrait);
                 self.right_pane.render_with(
@@ -3443,7 +3445,7 @@ impl BrowserLayout {
                 // areas so a click can't focus them based on the previous layout.
                 self.left_pane.invalidate_areas();
             }
-        }
+        });
 
         // Modal dialogs draw last so they overlay every pane.
         self.render_dialog(area, buf);
@@ -4687,6 +4689,27 @@ mod tests {
 
     /// Render the layout into a fixed-size `TestBackend` and return the screen as
     /// a newline-joined string, matching the external e2e harness's helper.
+    #[test]
+    fn panes_release_their_focused_frame_while_a_dialog_is_open() {
+        let mut layout = test_layout();
+        layout.set_focus(FocusArea::ContentPanel);
+        let corners = |layout: &BrowserLayout| render_layout(layout, 120, 32).matches('┏').count();
+        assert_eq!(corners(&layout), 1, "the focused pane wears the only heavy frame");
+
+        layout.dialog = Some(ConfirmDialog::new(
+            "Delete Bookmark",
+            "Delete bookmark?",
+            DialogAction::DeleteBookmark { id: "missing-id".to_string(), repo_root: None },
+        ));
+        let frame = render_layout(&layout, 120, 32);
+        assert_eq!(frame.matches('┏').count(), 1, "only the dialog is framed as focused:\n{frame}");
+        let dialog_row = frame.lines().find(|line| line.contains('┏')).expect("dialog frame");
+        assert!(dialog_row.contains("Delete Bookmark"), "the heavy frame is the dialog's");
+
+        layout.dialog = None;
+        assert_eq!(corners(&layout), 1, "closing the dialog gives the pane its frame back");
+    }
+
     fn render_layout(layout: &BrowserLayout, width: u16, height: u16) -> String {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;

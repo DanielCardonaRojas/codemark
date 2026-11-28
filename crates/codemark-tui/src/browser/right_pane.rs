@@ -1936,7 +1936,9 @@ impl RightPane {
         let frame = SPINNER_FRAMES[self.loading_tick % SPINNER_FRAMES.len()];
 
         // Stands in for the steps panel, so it borrows its focus state.
-        let border_color = crate::theme::palette().border(self.steps.focused, self.steps.linked);
+        let (focused, linked) =
+            crate::browser::tabs::frame_focus(self.steps.focused, self.steps.linked);
+        let border_color = crate::theme::palette().border(focused, linked);
         let border_style = Style::default().fg(border_color);
         let mut title = ratatui::text::Line::from(vec![
             ratatui::text::Span::raw("  "),
@@ -1949,7 +1951,7 @@ impl RightPane {
         let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
         title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
-            .border_type(crate::browser::tabs::frame_border_type(self.steps.focused))
+            .border_type(crate::browser::tabs::frame_border_type(focused))
             .title(title)
             .border_style(border_style);
         let inner = block.inner(area);
@@ -1962,7 +1964,7 @@ impl RightPane {
             if x < area.right()
                 && let Some(cell) = buf.cell_mut((x, y))
             {
-                cell.set_char(crate::browser::tabs::frame_horizontal(self.steps.focused));
+                cell.set_char(crate::browser::tabs::frame_horizontal(focused));
                 cell.set_style(border_style);
             }
         }
@@ -2010,7 +2012,8 @@ impl RightPane {
         // `Steps` while the collection list holds focus), so read the panel's
         // own focus. Unfocused, the overview still follows the list and scrolls
         // with `J`/`K`, so it's drawn as linked rather than dim.
-        let border_color = crate::theme::palette().border(self.overview.focused(), true);
+        let (focused, linked) = crate::browser::tabs::frame_focus(self.overview.focused(), true);
+        let border_color = crate::theme::palette().border(focused, linked);
         let border_style = Style::default().fg(border_color);
 
         let mut title = ratatui::text::Line::from(vec![
@@ -2024,7 +2027,7 @@ impl RightPane {
         let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
         title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
-            .border_type(crate::browser::tabs::frame_border_type(self.overview.focused()))
+            .border_type(crate::browser::tabs::frame_border_type(focused))
             .title(title)
             .border_style(border_style);
 
@@ -2038,7 +2041,7 @@ impl RightPane {
             if x < area.right()
                 && let Some(cell) = buf.cell_mut((x, y))
             {
-                cell.set_char(crate::browser::tabs::frame_horizontal(self.overview.focused()));
+                cell.set_char(crate::browser::tabs::frame_horizontal(focused));
                 cell.set_style(border_style);
             }
         }

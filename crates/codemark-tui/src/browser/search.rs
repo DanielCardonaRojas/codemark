@@ -300,16 +300,17 @@ impl Component for SearchBar {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         // Render border
+        let (focused, _) = crate::browser::tabs::frame_focus(self.focused, false);
         let border_style = if self.error_message.is_some() {
             Style::default().fg(crate::theme::palette().error)
-        } else if self.focused {
+        } else if focused {
             Style::default().fg(crate::theme::palette().accent)
         } else {
             Style::default().fg(crate::theme::palette().dim)
         };
 
         let block = ratatui::widgets::Block::bordered()
-            .border_type(crate::browser::tabs::frame_border_type(self.focused))
+            .border_type(crate::browser::tabs::frame_border_type(focused))
             .border_style(border_style)
             .borders(ratatui::widgets::Borders::ALL);
 

@@ -731,16 +731,17 @@ impl Component for Panel {
             })
             .collect();
 
-        // Create the block with border
+        // Create the block with border; it reads as unfocused behind a popup.
+        let (frame_focused, _) = crate::browser::tabs::frame_focus(self.focused, false);
         let block = Block::bordered()
             .border_type(self.border_type)
             .title(self.title.as_str())
-            .title_style(if self.focused {
+            .title_style(if frame_focused {
                 self.focus_style.add_modifier(Modifier::BOLD)
             } else {
                 self.normal_style
             })
-            .border_style(if self.focused { self.focus_style } else { self.normal_style });
+            .border_style(if frame_focused { self.focus_style } else { self.normal_style });
 
         // Render the list using StatefulWidget for native scrolling.
         // We temporarily hide the selection from ListState during render so that
@@ -767,7 +768,7 @@ impl Component for Panel {
 
         // Render scrollbar if needed
         if self.show_scrollbar && !self.items.is_empty() && self.items.len() > height {
-            let scrollbar_style = if self.focused { self.focus_style } else { self.normal_style };
+            let scrollbar_style = if frame_focused { self.focus_style } else { self.normal_style };
 
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -817,7 +818,7 @@ impl Component for Panel {
             let y = area.bottom() - 1;
 
             if x > area.left() {
-                let indicator_style = if self.focused {
+                let indicator_style = if crate::browser::tabs::frame_focus(self.focused, false).0 {
                     self.focus_style.add_modifier(Modifier::BOLD)
                 } else {
                     self.normal_style

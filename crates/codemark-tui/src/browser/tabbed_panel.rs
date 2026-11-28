@@ -843,9 +843,10 @@ impl TabbedPanel {
             }
         }
 
-        let border_color = crate::theme::palette().border(self.focused, self.linked);
+        let (focused, linked) = crate::browser::tabs::frame_focus(self.focused, self.linked);
+        let border_color = crate::theme::palette().border(focused, linked);
         let border_style = Style::default().fg(border_color);
-        let ends = if self.focused { ('╺', '╸') } else { ('╶', '╴') };
+        let ends = if focused { ('╺', '╸') } else { ('╶', '╴') };
         for (x, glyph) in [(row.left(), ends.0), (row.right() - 1, ends.1)] {
             if let Some(cell) = buf.cell_mut((x, row.y)) {
                 cell.set_char(glyph);
@@ -988,7 +989,8 @@ impl TabbedPanel {
         }
 
         // Render outer border for the entire panel area with inline tabs
-        let border_color = crate::theme::palette().border(focused, self.linked);
+        let (focused, linked) = crate::browser::tabs::frame_focus(focused, self.linked);
+        let border_color = crate::theme::palette().border(focused, linked);
         let border_style = Style::default().fg(border_color);
 
         let block = ratatui::widgets::Block::bordered()
@@ -1054,7 +1056,7 @@ impl TabbedPanel {
             let y = area.bottom() - 1;
 
             if x > area.left() {
-                let indicator_style = if self.focused {
+                let indicator_style = if crate::browser::tabs::frame_focus(self.focused, false).0 {
                     Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(crate::theme::palette().dim)
