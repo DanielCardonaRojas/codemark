@@ -3183,13 +3183,9 @@ impl BrowserLayout {
         match (right, self.focus) {
             (true, _) if on_left_list => {
                 self.focus = FocusArea::Main;
-                // An overview hides the details, so a remembered Details (or
-                // comment list) section isn't drawn: land on the overview.
-                if self.right_pane.overview_active
-                    && self.right_pane.focused != RightPaneFocus::Steps
-                {
-                    self.right_pane.focus_steps();
-                }
+                // The remembered section may be hidden now (say an overview
+                // replaced the steps): fall back to one that's drawn.
+                self.right_pane.ensure_visible_focus();
                 tracing::debug!(
                     target: "codemark::ui",
                     section = ?self.right_pane.focused,
@@ -3843,6 +3839,38 @@ mod tests {
         press(&mut layout, KeyCode::Right);
         assert_eq!(layout.focus, FocusArea::ContentPanel, "fullscreen portrait: still none");
         assert_eq!(layout.left_pane_size, LeftPaneSize::Full, "and the list stays fullscreen");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn arrow_back_after_moving_to_another_collection_focuses_its_overview() {
+        use ratatui::crossterm::event::KeyCode;
+        let mut layout = collection_layout(LayoutMode::Landscape);
+        let db = layout.workspace.focus_db();
+        db.insert_collection(&e2e_collection("col-other", "OtherTour")).expect("seed collection");
+        db.add_to_collection("col-other", &["bm-enter".to_string()]).expect("populate");
+        layout.update_tours_collections();
+        layout.set_focus(FocusArea::ContentPanel);
+        render_at(&layout, 140, 40);
+
+        // Enter a collection and focus its details.
+        press(&mut layout, KeyCode::Enter);
+        assert!(!layout.right_pane.overview_active, "entered: steps and details");
+        press(&mut layout, KeyCode::Right);
+        layout.right_pane.focus_details();
+        layout.update_focus_state();
+        render_at(&layout, 140, 40);
+
+        // Back to the list, onto another collection: its overview hides the details.
+        press(&mut layout, KeyCode::Left);
+        assert_eq!(layout.focus, FocusArea::ContentPanel);
+        press(&mut layout, KeyCode::Char('j'));
+        render_at(&layout, 140, 40);
+        assert!(layout.right_pane.overview_active, "the other collection's overview");
+
+        press(&mut layout, KeyCode::Right);
+        assert_eq!(layout.focus, FocusArea::Main);
+        assert!(layout.right_pane.overview.focused(), "lands on the visible overview");
+        assert!(!layout.right_pane.details.focused, "not the hidden details");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

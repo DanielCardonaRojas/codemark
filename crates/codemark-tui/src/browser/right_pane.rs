@@ -2075,6 +2075,22 @@ impl RightPane {
         handled
     }
 
+    /// Fall back to the preview (or overview) when the remembered section
+    /// isn't drawn: an overview hides the details and the comment list, and
+    /// the list also hides with the Info/Query tabs or a narrow layout. Used
+    /// when focus returns to this pane, so it never lands on a hidden panel.
+    pub fn ensure_visible_focus(&mut self) {
+        if self.overview_active && self.focused != RightPaneFocus::Steps {
+            tracing::debug!(
+                target: "codemark::ui",
+                section = ?self.focused,
+                "section hidden by the overview; focusing the overview"
+            );
+            self.focus_steps();
+        }
+        self.leave_hidden_comments();
+    }
+
     /// Move focus to the preview when the focused comment list isn't drawn.
     fn leave_hidden_comments(&mut self) {
         if self.focused == RightPaneFocus::Comments
