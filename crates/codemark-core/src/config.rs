@@ -517,6 +517,11 @@ pub struct OpenConfig {
     /// Default command template to use when no extension-specific override matches.
     /// Supports placeholders: {FILE}, {LINE_START}, {LINE_END}, {ID}
     pub default: Option<String>,
+    /// Command template for opening a whole repository (the TUI's Repos tab `o`).
+    /// Placeholders: `{DIR}` (repo root), `{NAME}` (repo folder name). Runs with
+    /// the repo root as its working directory. When unset, the TUI quits into
+    /// `$SHELL` at the repo root.
+    pub repo: Option<String>,
     /// Extension-specific command templates (e.g., "rs" -> "nvim +{LINE_START} {FILE}").
     pub extensions: HashMap<String, String>,
     /// Classification of editors by type (terminal vs GUI).
@@ -593,6 +598,15 @@ pub struct EditorCommand {
     pub program: String,
     pub args: Vec<String>,
     pub should_wait: bool,
+    /// Working directory to run the command in (`None` = inherit).
+    pub cwd: Option<String>,
+}
+
+/// The user's interactive shell: `$SHELL` on Unix (falling back to `sh`),
+/// `%COMSPEC%` on Windows (falling back to `cmd`).
+fn default_shell() -> String {
+    let (var, fallback) = if cfg!(windows) { ("COMSPEC", "cmd") } else { ("SHELL", "sh") };
+    std::env::var(var).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| fallback.to_string())
 }
 
 impl OpenConfig {
@@ -645,7 +659,42 @@ impl OpenConfig {
             std::path::Path::new(&program).file_name().and_then(|n| n.to_str()).unwrap_or("");
         let should_wait = self.should_wait_for_editor(program_name);
 
-        Some(EditorCommand { program, args, should_wait })
+        Some(EditorCommand { program, args, should_wait, cwd: None })
+    }
+
+    /// Build a ready-to-spawn command that opens a repository directory.
+    ///
+    /// With a `repo` template, `{DIR}` becomes the repo root and `{NAME}` its
+    /// folder name. Without one, the default is the user's shell (`$SHELL`,
+    /// falling back to `sh`; `%COMSPEC%` on Windows), which quits the TUI into
+    /// a shell at the repo root. Either way the command runs with the repo
+    /// root as its working directory.
+    ///
+    /// Returns `None` if the template fails to tokenize or is empty.
+    pub fn build_repo_command(&self, dir: &str) -> Option<EditorCommand> {
+        let cwd = Some(dir.to_string());
+        let Some(template) = &self.repo else {
+            return Some(EditorCommand {
+                program: default_shell(),
+                args: Vec::new(),
+                // A shell takes over the terminal: always quit the TUI into it.
+                should_wait: true,
+                cwd,
+            });
+        };
+
+        let name = std::path::Path::new(dir).file_name().and_then(|n| n.to_str()).unwrap_or(dir);
+        // Tokenize before substituting so a repo path with spaces stays a
+        // single argument.
+        let tokens: Vec<String> = shlex::split(template)?
+            .into_iter()
+            .map(|token| token.replace("{DIR}", dir).replace("{NAME}", name))
+            .collect();
+        let (program, args) = tokens.split_first()?;
+        let program_name =
+            std::path::Path::new(program).file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let should_wait = self.should_wait_for_editor(program_name);
+        Some(EditorCommand { program: program.clone(), args: args.to_vec(), should_wait, cwd })
     }
 
     /// Get the command for a specific file extension.
@@ -796,6 +845,9 @@ impl Config {
         // Open config merge
         if other.open.default.is_some() {
             self.open.default = other.open.default;
+        }
+        if other.open.repo.is_some() {
+            self.open.repo = other.open.repo;
         }
         // Merge extensions (local extends global)
         for (key, value) in other.open.extensions {
@@ -1234,6 +1286,49 @@ gui = ["mygui", "code"]
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.open.default, None);
         assert!(config.open.extensions.is_empty());
+    }
+
+    #[test]
+    fn build_repo_command_substitutes_dir_template() {
+        let config =
+            OpenConfig { repo: Some("code --new-window {DIR}".to_string()), ..Default::default() };
+        let cmd = config.build_repo_command("/path/with space/repo").unwrap();
+        assert_eq!(cmd.program, "code");
+        assert_eq!(cmd.args, vec!["--new-window", "/path/with space/repo"]);
+        assert!(!cmd.should_wait);
+        assert_eq!(cmd.cwd.as_deref(), Some("/path/with space/repo"));
+    }
+
+    #[test]
+    fn build_repo_command_substitutes_name() {
+        let config = OpenConfig {
+            repo: Some("tmux new-session -A -s {NAME} -c {DIR}".to_string()),
+            ..Default::default()
+        };
+        let cmd = config.build_repo_command("/src/codemark").unwrap();
+        assert_eq!(cmd.program, "tmux");
+        assert_eq!(cmd.args, vec!["new-session", "-A", "-s", "codemark", "-c", "/src/codemark"]);
+        // Unknown programs take over the terminal (the TUI quits into them).
+        assert!(cmd.should_wait);
+    }
+
+    #[test]
+    fn build_repo_command_defaults_to_shell_in_repo() {
+        let cmd = OpenConfig::default().build_repo_command("/src/codemark").unwrap();
+        assert_eq!(cmd.program, default_shell());
+        assert!(cmd.args.is_empty());
+        assert!(cmd.should_wait);
+        assert_eq!(cmd.cwd.as_deref(), Some("/src/codemark"));
+    }
+
+    #[test]
+    fn parse_open_repo_template() {
+        let toml = r#"
+[open]
+repo = "zed {DIR}"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.open.repo, Some("zed {DIR}".to_string()));
     }
 
     #[test]

@@ -672,6 +672,7 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
                         target: "codemark::shell",
                         program = %cmd.program,
                         args = ?cmd.args,
+                        cwd = ?cmd.cwd,
                         wait = cmd.should_wait,
                         "spawning external command"
                     );
@@ -683,8 +684,7 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
                         #[cfg(unix)]
                         {
                             use std::os::unix::process::CommandExt;
-                            let err =
-                                std::process::Command::new(&cmd.program).args(&cmd.args).exec();
+                            let err = external_command(&cmd).exec();
 
                             // If exec returns, it failed
                             tracing::error!(target: "codemark::shell", error = %err, "failed to exec editor");
@@ -694,8 +694,7 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
 
                         #[cfg(not(unix))]
                         {
-                            match std::process::Command::new(&cmd.program).args(&cmd.args).status()
-                            {
+                            match external_command(&cmd).status() {
                                 Ok(status) if status.success() => return Ok(Some(0)),
                                 Ok(status) => {
                                     let code = status.code().unwrap_or(1);
@@ -712,8 +711,13 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
                         }
                     } else {
                         // GUI editor: spawn in background
-                        let status =
-                            std::process::Command::new(&cmd.program).args(&cmd.args).spawn();
+                        // Detach stdio: the TUI owns the terminal, so anything the
+                        // program prints would be drawn over the dashboard.
+                        let status = external_command(&cmd)
+                            .stdin(std::process::Stdio::null())
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .spawn();
 
                         if let Err(e) = status {
                             tracing::error!(target: "codemark::shell", error = %e, "failed to spawn editor");
@@ -746,6 +750,16 @@ async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>>
     }
 
     Ok(None)
+}
+
+/// A [`std::process::Command`] for `cmd`: its program, args, and working dir.
+fn external_command(cmd: &crate::browser::ExternalCommand) -> std::process::Command {
+    let mut command = std::process::Command::new(&cmd.program);
+    command.args(&cmd.args);
+    if let Some(cwd) = &cmd.cwd {
+        command.current_dir(cwd);
+    }
+    command
 }
 
 /// Carry out what the settings overlay asked for.

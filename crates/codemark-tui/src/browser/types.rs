@@ -13,6 +13,8 @@ pub struct ExternalCommand {
     pub args: Vec<String>,
     /// Whether the TUI should wait for this command to complete (terminal editors)
     pub should_wait: bool,
+    /// Working directory to run the program in (`None` = inherit the TUI's).
+    pub cwd: Option<String>,
 }
 
 /// Result of a heal operation that can be displayed as a notification.

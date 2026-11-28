@@ -53,6 +53,7 @@ impl BrowserLayout {
                     Some(ContextTab::Repos) => {
                         bindings.push(("Enter", "Select repo"));
                         bindings.push(("Space", "Toggle repo"));
+                        bindings.push(("o", "Open repo"));
                     }
                     Some(ContextTab::Owners) => {
                         bindings.push(("Enter", "Toggle owner"));
@@ -226,6 +227,7 @@ impl BrowserLayout {
                             KeyBinding::new("Enter", "Select")
                                 .with_priority(HIDDEN_BINDING_PRIORITY),
                         );
+                        bindings.push(KeyBinding::new("o", "Open").with_priority(85));
                     }
                     Some(ContextTab::Owners) => {
                         // Enter is universal (hidden from the bar); Space is the
