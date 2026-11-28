@@ -2564,6 +2564,18 @@ impl BrowserLayout {
 
     /// Open the currently selected bookmark or tour step in the editor.
     pub fn open_in_editor(&mut self) {
+        // The Context panel lists repos, not code: `o` opens the selected repo
+        // (Repos tab) and is a no-op on the other tabs rather than falling
+        // through to the right pane's step.
+        if self.focus == FocusArea::ContextPanel {
+            if ContextTab::from_index(self.left_pane.context_panel.tabs.selected_index())
+                == Some(ContextTab::Repos)
+            {
+                self.open_selected_repo();
+            }
+            return;
+        }
+
         // Special handling for ContentPanel bookmarks: open directly without StepData
         if self.focus == FocusArea::ContentPanel
             && let Some(bookmark) = self
@@ -2628,7 +2640,57 @@ impl BrowserLayout {
                 program: cmd.program,
                 args: cmd.args,
                 should_wait: cmd.should_wait,
+                cwd: cmd.cwd,
             });
+        }
+    }
+
+    /// Open the repo selected on the Repos tab with `[open] repo` (or `$EDITOR`).
+    fn open_selected_repo(&mut self) {
+        let Some(root) = self
+            .left_pane
+            .context_panel
+            .active_panel_mut()
+            .and_then(|panel| panel.selected())
+            .and_then(|item| item.user_data.clone())
+        else {
+            return;
+        };
+
+        // Global config only: `open.repo` is global-only (see `Config::merge`),
+        // and skipping the selected repo's own config keeps it from steering the
+        // opener (e.g. via `editor_types`) or printing a parse warning over the
+        // dashboard when it's malformed.
+        let config = Config::load_global();
+
+        match config.open.build_repo_command(&root) {
+            Some(cmd) => {
+                tracing::debug!(
+                    target: "codemark::shell",
+                    repo_root = %root,
+                    program = %cmd.program,
+                    args = ?cmd.args,
+                    should_wait = cmd.should_wait,
+                    "open_selected_repo: pending command set"
+                );
+                self.pending_command = Some(ExternalCommand {
+                    program: cmd.program,
+                    args: cmd.args,
+                    should_wait: cmd.should_wait,
+                    cwd: cmd.cwd,
+                });
+            }
+            None => {
+                tracing::warn!(
+                    target: "codemark::shell",
+                    repo_root = %root,
+                    "open_selected_repo: repo command failed to tokenize"
+                );
+                self.pending_notification = Some(HealNotification {
+                    message: "Invalid [open] repo command".to_string(),
+                    success: false,
+                });
+            }
         }
     }
 
@@ -2715,6 +2777,7 @@ impl BrowserLayout {
                 program: cmd.program,
                 args: cmd.args,
                 should_wait: cmd.should_wait,
+                cwd: cmd.cwd,
             });
         }
     }
@@ -4871,6 +4934,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn o_on_repos_tab_opens_the_selected_repo_root() {
+        let (mut layout, root) = repo_layout();
+        // A repo-local `[open] repo` must be ignored: a cloned repo can't pick
+        // the program `o` runs (only the global config can).
+        std::fs::write(
+            root.join(".codemark").join("config.toml"),
+            "[open]\nrepo = \"myeditor --dir {DIR}\"\n",
+        )
+        .expect("write config");
+        let root_str = root.to_string_lossy().into_owned();
+
+        assert_eq!(
+            ContextTab::from_index(layout.left_pane.context_panel.tabs.selected_index()),
+            Some(ContextTab::Repos)
+        );
+        let panel = layout
+            .left_pane
+            .context_panel
+            .get_list_panel_mut(ContextTab::Repos.index())
+            .expect("repos panel");
+        panel.set_items(vec![PanelItem::new("repo").user_data(root_str.as_str())]);
+        assert!(panel.select_by_user_data(&root_str));
+        layout.set_focus(FocusArea::ContextPanel);
+
+        layout.open_in_editor();
+
+        let cmd = layout.take_pending_command().expect("repo open command");
+        assert_ne!(cmd.program, "myeditor", "repo-local opener must be ignored");
+        assert_eq!(cmd.cwd.as_deref(), Some(root_str.as_str()));
     }
 
     #[test]
