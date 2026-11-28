@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 use std::cell::RefCell;
 
@@ -431,7 +431,7 @@ impl SettingsOverlay {
         *self.tab_hit_areas.borrow_mut() = hit_areas;
 
         let block = Block::bordered()
-            .border_type(BorderType::Rounded)
+            .border_type(crate::browser::tabs::popup_border_type())
             .border_style(Style::default().fg(palette.accent))
             .title(Line::from(title_spans))
             .title_alignment(Alignment::Left);
@@ -819,12 +819,12 @@ mod tests {
         let mut overlay = SettingsOverlay::new(None);
         overlay.toggle();
         let area = Rect::new(0, 0, 80, 40);
-        // The popup's left border: the first `╭` on its top row.
+        // The popup's left border: the first `┏` on its top row.
         let left_edge = |portrait: bool| {
             let mut buf = Buffer::empty(area);
             overlay.render(area, &mut buf, &[], portrait);
             (0..area.height)
-                .find_map(|y| (0..area.width).find(|&x| buf[(x, y)].symbol() == "╭"))
+                .find_map(|y| (0..area.width).find(|&x| buf[(x, y)].symbol() == "┏"))
                 .expect("popup border drawn")
         };
         let landscape = left_edge(false);

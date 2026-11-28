@@ -122,6 +122,13 @@ pub fn frame_border_type(focused: bool) -> ratatui::widgets::BorderType {
     }
 }
 
+/// Border type for a modal popup (settings, branch transfer, comment draft,
+/// dialogs): a popup holds focus while it's open, so it's always framed as a
+/// focused pane.
+pub fn popup_border_type() -> ratatui::widgets::BorderType {
+    frame_border_type(true)
+}
+
 /// The horizontal border glyph matching [`frame_border_type`], for cells drawn
 /// over a frame's top border by hand.
 pub fn frame_horizontal(focused: bool) -> char {

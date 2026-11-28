@@ -11,7 +11,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Widget, Wrap};
 
 use codemark_core::engine::bookmark::BookmarkComment;
 use codemark_core::engine::comment_anchor::{self, CommentAnchor};
@@ -417,7 +417,7 @@ impl BrowserLayout {
         };
         Widget::render(Clear, popup, buf);
         let block = Block::bordered()
-            .border_type(BorderType::Rounded)
+            .border_type(crate::browser::tabs::popup_border_type())
             .border_style(Style::default().fg(palette.accent))
             .title(Span::styled(draft.title(), Style::default().add_modifier(Modifier::BOLD)))
             .title_bottom(Line::from(Span::styled(

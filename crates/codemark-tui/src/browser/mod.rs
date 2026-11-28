@@ -14,7 +14,7 @@ mod left_pane;
 mod right_pane;
 mod search;
 mod tabbed_panel;
-mod tabs;
+pub(crate) mod tabs;
 mod text_area;
 mod transfer;
 mod types;
