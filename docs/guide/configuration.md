@@ -38,7 +38,7 @@ Controls the `codemark open` command (and `o` in the TUI).
 # Default editor command. Placeholders: {FILE}, {LINE_START}, {LINE_END}, {ID}
 default = "vim +{LINE_START} {FILE}"
 # Command for opening a whole repo (`o` on the TUI's Repos tab).
-# Placeholders: {DIR}, {NAME}. Unset: quit the TUI into $SHELL at the repo root.
+# Placeholders: {DIR}, {NAME}. Global config only. Unset: quit into $SHELL there.
 repo = "code {DIR}"
 
 [open.extensions]
@@ -68,7 +68,9 @@ gui = ["xed", "code", "idea", "subl", "typora"]
 #### Opening a repo
 
 `o` on the TUI's Repos tab runs the `repo` command for the selected repo, with
-the repo root as its working directory. When `repo` is unset, the TUI quits into
+the repo root as its working directory. `repo` is read from the global config
+only. A repo's own `.codemark/config.toml` can't set it, so a cloned repo can't
+choose the program that runs when you press `o`. When `repo` is unset, the TUI quits into
 your shell (`$SHELL`, falling back to `sh`) at the repo root, which is the
 closest a program can get to `cd`-ing its parent shell. Type `exit` to return to
 the shell you launched codemark from.
@@ -77,12 +79,13 @@ Other common choices:
 
 ```toml
 [open]
+# Pick one.
 # Open the repo in an editor
 repo = "code {DIR}"
 # Attach to (or create) a tmux session named after the repo
-repo = "tmux new-session -A -s {NAME} -c {DIR}"
+# repo = "tmux new-session -A -s {NAME} -c {DIR}"
 # Already inside tmux: create the session if needed and switch to it
-repo = "sh -c 'tmux has-session -t \"$1\" 2>/dev/null || tmux new-session -d -s \"$1\" -c \"$2\"; tmux switch-client -t \"$1\"' sh {NAME} {DIR}"
+# repo = "sh -c 'tmux has-session -t \"$1\" 2>/dev/null || tmux new-session -d -s \"$1\" -c \"$2\"; tmux switch-client -t \"$1\"' sh {NAME} {DIR}"
 ```
 
 Like the other `[open]` commands, known GUI editors run in the background while

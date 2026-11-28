@@ -2657,7 +2657,8 @@ impl BrowserLayout {
             return;
         };
 
-        // Layer the selected repo's own `.codemark/config.toml` over the global one.
+        // Layered for editor_types etc.; `open.repo` itself only ever comes from
+        // the global config (see `Config::merge`).
         let config = Config::load_layered(&std::path::Path::new(&root).join(".codemark"));
 
         match config.open.build_repo_command(&root) {
@@ -4936,7 +4937,8 @@ mod tests {
     #[test]
     fn o_on_repos_tab_opens_the_selected_repo_root() {
         let (mut layout, root) = repo_layout();
-        // A repo-local `[open] repo` template wins over any global config.
+        // A repo-local `[open] repo` must be ignored: a cloned repo can't pick
+        // the program `o` runs (only the global config can).
         std::fs::write(
             root.join(".codemark").join("config.toml"),
             "[open]\nrepo = \"myeditor --dir {DIR}\"\n",
@@ -4960,8 +4962,7 @@ mod tests {
         layout.open_in_editor();
 
         let cmd = layout.take_pending_command().expect("repo open command");
-        assert_eq!(cmd.program, "myeditor");
-        assert_eq!(cmd.args, vec!["--dir".to_string(), root_str.clone()]);
+        assert_ne!(cmd.program, "myeditor", "repo-local opener must be ignored");
         assert_eq!(cmd.cwd.as_deref(), Some(root_str.as_str()));
     }
 

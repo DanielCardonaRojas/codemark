@@ -518,6 +518,7 @@ pub struct OpenConfig {
     /// Supports placeholders: {FILE}, {LINE_START}, {LINE_END}, {ID}
     pub default: Option<String>,
     /// Command template for opening a whole repository (the TUI's Repos tab `o`).
+    /// Read from the global config only; a repo-local value is ignored.
     /// Placeholders: `{DIR}` (repo root), `{NAME}` (repo folder name). Runs with
     /// the repo root as its working directory. When unset, the TUI quits into
     /// `$SHELL` at the repo root.
@@ -600,6 +601,30 @@ pub struct EditorCommand {
     pub should_wait: bool,
     /// Working directory to run the command in (`None` = inherit).
     pub cwd: Option<String>,
+}
+
+/// Replace `{DIR}` and `{NAME}` in `token` in a single pass, so placeholder-like
+/// text inside an inserted value (e.g. a repo path containing `{NAME}`) is kept
+/// verbatim rather than expanded again.
+fn substitute_repo_placeholders(token: &str, dir: &str, name: &str) -> String {
+    let mut out = String::with_capacity(token.len());
+    let mut rest = token;
+    while let Some(start) = rest.find('{') {
+        out.push_str(&rest[..start]);
+        let tail = &rest[start..];
+        if let Some(after) = tail.strip_prefix("{DIR}") {
+            out.push_str(dir);
+            rest = after;
+        } else if let Some(after) = tail.strip_prefix("{NAME}") {
+            out.push_str(name);
+            rest = after;
+        } else {
+            out.push('{');
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The user's interactive shell: `$SHELL` on Unix (falling back to `sh`),
@@ -687,8 +712,8 @@ impl OpenConfig {
         // Tokenize before substituting so a repo path with spaces stays a
         // single argument.
         let tokens: Vec<String> = shlex::split(template)?
-            .into_iter()
-            .map(|token| token.replace("{DIR}", dir).replace("{NAME}", name))
+            .iter()
+            .map(|token| substitute_repo_placeholders(token, dir, name))
             .collect();
         let (program, args) = tokens.split_first()?;
         let program_name =
@@ -846,9 +871,9 @@ impl Config {
         if other.open.default.is_some() {
             self.open.default = other.open.default;
         }
-        if other.open.repo.is_some() {
-            self.open.repo = other.open.repo;
-        }
+        // `open.repo` is deliberately NOT merged from a local config: it runs on
+        // a single keypress, so a cloned repo's committed `.codemark/config.toml`
+        // must not be able to choose the program that runs. Global config only.
         // Merge extensions (local extends global)
         for (key, value) in other.open.extensions {
             self.open.extensions.insert(key, value);
@@ -1319,6 +1344,23 @@ gui = ["mygui", "code"]
         assert!(cmd.args.is_empty());
         assert!(cmd.should_wait);
         assert_eq!(cmd.cwd.as_deref(), Some("/src/codemark"));
+    }
+
+    #[test]
+    fn build_repo_command_does_not_reexpand_inserted_values() {
+        let config =
+            OpenConfig { repo: Some("code {DIR} --name={NAME}".to_string()), ..Default::default() };
+        let cmd = config.build_repo_command("/src/{NAME}/repo").unwrap();
+        assert_eq!(cmd.args, vec!["/src/{NAME}/repo", "--name=repo"]);
+    }
+
+    #[test]
+    fn local_config_cannot_set_repo_opener() {
+        let mut global = Config::default();
+        global.open.repo = Some("code {DIR}".to_string());
+        let local: Config = toml::from_str("[open]\nrepo = \"sh -c evil\"\n").unwrap();
+        global.merge(local);
+        assert_eq!(global.open.repo.as_deref(), Some("code {DIR}"));
     }
 
     #[test]
