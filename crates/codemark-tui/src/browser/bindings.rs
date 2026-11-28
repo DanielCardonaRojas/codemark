@@ -136,8 +136,8 @@ impl BrowserLayout {
                 if self.right_pane.link_navigation_available() {
                     bindings.push(("n/N", "Cycle links"));
                 }
-                bindings.push(("←/h", "Previous step"));
-                bindings.push(("→/l", "Next step"));
+                bindings.push(("h", "Previous step"));
+                bindings.push(("l", "Next step"));
                 bindings.push(("H", "Heal"));
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));

@@ -47,6 +47,10 @@ pub struct TabbedPanel {
     /// so the preview's health is spelled out alongside the colored dots. `None`
     /// hides the label (all panels except the preview/steps panel).
     pub health_label: std::cell::Cell<Option<HealthStatus>>,
+    /// Whether this panel follows another pane's selection (the main preview,
+    /// which `J`/`K` scroll from any pane). Unfocused, its border is drawn in
+    /// the "linked" color instead of dim so it reads as semi-active.
+    pub linked: bool,
 }
 
 /// Convert a bookmark to a PanelItem with consistent formatting.
@@ -622,6 +626,7 @@ impl TabbedPanel {
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(1),
             health_label: std::cell::Cell::new(None),
+            linked: false,
         }
     }
 
@@ -649,6 +654,7 @@ impl TabbedPanel {
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(2),
             health_label: std::cell::Cell::new(None),
+            linked: false,
         }
     }
 
@@ -723,6 +729,7 @@ impl TabbedPanel {
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(3),
             health_label: std::cell::Cell::new(None),
+            linked: false,
         }
     }
 
@@ -753,6 +760,7 @@ impl TabbedPanel {
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(4),
             health_label: std::cell::Cell::new(None),
+            linked: true,
         }
     }
 
@@ -773,6 +781,7 @@ impl TabbedPanel {
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(5),
             health_label: std::cell::Cell::new(None),
+            linked: false,
         }
     }
 
@@ -834,10 +843,10 @@ impl TabbedPanel {
             }
         }
 
-        let border_color =
-            if self.focused { crate::theme::palette().accent } else { crate::theme::palette().dim };
+        let border_color = crate::theme::palette().border(self.focused, self.linked);
         let border_style = Style::default().fg(border_color);
-        for (x, glyph) in [(row.left(), '╶'), (row.right() - 1, '╴')] {
+        let ends = if self.focused { ('╺', '╸') } else { ('╶', '╴') };
+        for (x, glyph) in [(row.left(), ends.0), (row.right() - 1, ends.1)] {
             if let Some(cell) = buf.cell_mut((x, row.y)) {
                 cell.set_char(glyph);
                 cell.set_style(border_style);
@@ -869,7 +878,7 @@ impl TabbedPanel {
         // Rightmost title cell: the last non-border glyph before the badge region.
         let title_end = (row.left() + 1..indicator_end)
             .rev()
-            .find(|&x| buf[(x, row.y)].symbol() != "─")
+            .find(|&x| !crate::browser::tabs::is_frame_horizontal(buf[(x, row.y)].symbol()))
             .unwrap_or(row.left());
         if indicator_x <= title_end + 1 {
             return;
@@ -979,12 +988,11 @@ impl TabbedPanel {
         }
 
         // Render outer border for the entire panel area with inline tabs
-        let border_color =
-            if focused { crate::theme::palette().accent } else { crate::theme::palette().dim };
+        let border_color = crate::theme::palette().border(focused, self.linked);
         let border_style = Style::default().fg(border_color);
 
         let block = ratatui::widgets::Block::bordered()
-            .border_type(ratatui::widgets::BorderType::Rounded)
+            .border_type(crate::browser::tabs::frame_border_type(focused))
             .border_style(border_style)
             .title(tab_titles)
             .title_style(border_style)
@@ -1000,7 +1008,7 @@ impl TabbedPanel {
             if x < area.right()
                 && let Some(cell) = buf.cell_mut((x, y))
             {
-                cell.set_char('─');
+                cell.set_char(crate::browser::tabs::frame_horizontal(focused));
                 cell.set_style(border_style);
             }
         }
@@ -1471,6 +1479,7 @@ mod tests {
             sort_changed: std::cell::Cell::new(false),
             pane_number: None,
             health_label: std::cell::Cell::new(None),
+            linked: false,
         }
     }
 
@@ -1492,6 +1501,7 @@ mod tests {
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(3),
             health_label: std::cell::Cell::new(None),
+            linked: false,
         }
     }
 

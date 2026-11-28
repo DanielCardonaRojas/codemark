@@ -350,6 +350,34 @@ impl Default for Palette {
 }
 
 impl Palette {
+    /// Border color for a panel: `accent` when focused, [`Self::linked`] when
+    /// `linked` (unfocused, but following the focused pane's selection and
+    /// scrollable with `J`/`K`, like the main preview), `dim` otherwise.
+    pub fn border(&self, focused: bool, linked: bool) -> Color {
+        if focused {
+            self.accent
+        } else if linked {
+            self.linked()
+        } else {
+            self.dim
+        }
+    }
+
+    /// The "linked" border: the accent faded toward the background, so it
+    /// reads as a weaker focus rather than another shade of gray (many themes'
+    /// `gray` and `dim` are near-identical). ANSI palettes, which have no RGB
+    /// to blend, fall back to `gray`, distinct from their `DarkGray` dim.
+    pub fn linked(&self) -> Color {
+        const FADE: f32 = 0.4;
+        match (self.accent, self.inverse) {
+            (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) => {
+                let lerp = |x: u8, y: u8| (x as f32 * (1.0 - FADE) + y as f32 * FADE).round() as u8;
+                Color::Rgb(lerp(ar, br), lerp(ag, bg), lerp(ab, bb))
+            }
+            _ => self.gray,
+        }
+    }
+
     /// Derive the full chrome palette from a syntect theme.
     ///
     /// Structural roles come from the global settings (`emphasis` from the
@@ -745,6 +773,18 @@ mod tests {
         assert_eq!(theme.name.as_deref(), Some("Everforest Dark"));
         assert_eq!(palette.error, Color::Rgb(0xe6, 0x7e, 0x80)); // base08 red
         assert_eq!(palette.success, Color::Rgb(0xa7, 0xc0, 0x80)); // base0B green
+    }
+
+    #[test]
+    fn linked_border_fades_the_accent_and_differs_from_dim() {
+        let registry = registry_with_no_user_dir();
+        let (_, palette) = registry.resolve_full("Everforest Dark");
+        // Accent #7fbbb3 faded 40% toward background #2d353b.
+        assert_eq!(palette.linked(), Color::Rgb(0x5e, 0x85, 0x83));
+        assert_ne!(palette.linked(), palette.dim);
+        assert_ne!(palette.linked(), palette.accent);
+        // ANSI palettes can't blend and fall back to gray.
+        assert_eq!(Palette::default().linked(), Color::Gray);
     }
 
     #[test]

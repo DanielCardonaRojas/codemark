@@ -78,6 +78,25 @@ impl BrowserLayout {
             return true;
         }
 
+        // `←`/`→` switch columns, after delegation so a pane that uses the
+        // arrows itself (the search input, the code preview's column cursor)
+        // keeps them.
+        if let Event::Key(key) = event
+            && key.modifiers.is_empty()
+            && self.should_handle_keybindings()
+        {
+            let right = match key.code {
+                ratatui::crossterm::event::KeyCode::Right => Some(true),
+                ratatui::crossterm::event::KeyCode::Left => Some(false),
+                _ => None,
+            };
+            if let Some(right) = right
+                && self.focus_column(right)
+            {
+                return true;
+            }
+        }
+
         if let Event::Key(key) = event
             && key.code == ratatui::crossterm::event::KeyCode::Esc
             && self.focus == FocusArea::Main

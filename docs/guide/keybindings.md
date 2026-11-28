@@ -64,7 +64,8 @@ These work from anywhere (except while typing in the search bar, unless noted):
 | Key | Action |
 |-----|--------|
 | `1`–`5` | Jump to pane (matches the `[N]` border badge) |
-| `Tab` / `Shift+Tab` | Cycle focus between panes |
+| `Tab` / `Shift+Tab` | Cycle focus between the panes of a column |
+| `←` / `→` | Move focus to the other column, back to the pane it last had focused |
 | `[` / `]` | Previous / next tab within the focused panel |
 | `+` / `=` | Grow the focused pane |
 | `-` / `_` | Shrink the focused pane |
@@ -99,8 +100,8 @@ These work from anywhere (except while typing in the search bar, unless noted):
 | `j` / `↓` | lists, code, markdown | Move down (wraps) |
 | `k` / `↑` | lists, code, markdown | Move up (wraps) |
 | `J` / `K` | global | Scroll the visible preview by 5 lines |
-| `h` / `←` | right pane | Previous step in a collection |
-| `l` / `→` | right pane | Next step in a collection |
+| `h` | right pane | Previous step in a collection |
+| `l` | right pane | Next step in a collection |
 | `n` / `N` | markdown | Focus next / previous link |
 | `Enter` | markdown | Open the focused link |
 

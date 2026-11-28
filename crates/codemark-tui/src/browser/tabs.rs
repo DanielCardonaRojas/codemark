@@ -112,6 +112,27 @@ pub fn render_sort_icon(area: Rect, buf: &mut Buffer, number: u8, icon: &str, st
     }
 }
 
+/// Border type for a pane frame: heavy lines while focused, so the focused pane
+/// stands out by weight as well as color; rounded light lines otherwise.
+pub fn frame_border_type(focused: bool) -> ratatui::widgets::BorderType {
+    if focused {
+        ratatui::widgets::BorderType::Thick
+    } else {
+        ratatui::widgets::BorderType::Rounded
+    }
+}
+
+/// The horizontal border glyph matching [`frame_border_type`], for cells drawn
+/// over a frame's top border by hand.
+pub fn frame_horizontal(focused: bool) -> char {
+    if focused { '━' } else { '─' }
+}
+
+/// Whether `symbol` is a (light or heavy) horizontal frame border cell.
+pub fn is_frame_horizontal(symbol: &str) -> bool {
+    symbol == "─" || symbol == "━"
+}
+
 /// Draw a pane-number badge (e.g. `[3]`) on the top border of `area`, aligned to
 /// the right edge just inside the rounded corner.
 ///
