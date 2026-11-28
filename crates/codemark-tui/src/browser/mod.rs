@@ -3806,6 +3806,12 @@ mod tests {
         assert!(layout.right_pane.details.focused, "and it holds focus");
         press(&mut layout, KeyCode::Right);
         assert_eq!(layout.focus, FocusArea::Main, "no column further right");
+        let switch = |layout: &BrowserLayout| {
+            layout.get_help_bindings().iter().any(|&(key, _)| key == "←/→")
+        };
+        assert!(switch(&layout), "the help lists column switching");
+        layout.set_focus(FocusArea::Search);
+        assert!(!switch(&layout), "not while the arrows edit the query");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
